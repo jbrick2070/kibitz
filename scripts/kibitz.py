@@ -210,11 +210,33 @@ def run_agy(prompt: str, repo: Path, out_file: Path, log_file: Path) -> bool:
     (out_file.parent / "agy_model_selected.txt").write_text(
         AGY_MODEL or "(agy default)", encoding="utf-8")
     print(f"  -> antigravity: model={AGY_MODEL or 'default'} file-handoff -> {out_file.name}")
-    with log_file.open("w", encoding="utf-8") as log:
-        proc = subprocess.run(cmd, text=True, cwd=str(repo),
-                              stdout=log, stderr=subprocess.STDOUT,
-                              encoding="utf-8", errors="replace",
-                              timeout=PER_AGENT_TIMEOUT)
+    try:
+        if os.name == "nt":
+            # agy 1.0.13's CLI runs a console/TTY check at boot and HANGS FOREVER when launched
+            # with no console -- i.e. from any detached/background process (CI, a server, an IDE
+            # plugin, Desktop Commander). Give it its OWN console so the check passes. We never
+            # read agy's stdout (the review arrives via the file-handoff below), so there is no
+            # pipe to block on; the console is created hidden to avoid a flashing window.
+            CREATE_NEW_CONSOLE = 0x00000010
+            si = subprocess.STARTUPINFO()
+            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            si.wShowWindow = 0  # SW_HIDE
+            log_file.write_text(
+                "agy launched in its own hidden console (Windows TTY-check workaround); the "
+                "review arrives via the file-handoff, so agy's stdout is not captured here.\n",
+                encoding="utf-8")
+            proc = subprocess.run(cmd, cwd=str(repo),
+                                  creationflags=CREATE_NEW_CONSOLE, startupinfo=si,
+                                  timeout=PER_AGENT_TIMEOUT)
+        else:
+            with log_file.open("w", encoding="utf-8") as log:
+                proc = subprocess.run(cmd, text=True, cwd=str(repo),
+                                      stdout=log, stderr=subprocess.STDOUT,
+                                      encoding="utf-8", errors="replace",
+                                      timeout=PER_AGENT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        print(f"  [FAILED] antigravity (timeout after {PER_AGENT_TIMEOUT}s)")
+        return False
     ok = proc.returncode == 0 and out_file.exists() and out_file.stat().st_size > 0
     print(f"  [{'OK' if ok else 'FAILED'}] antigravity (rc={proc.returncode}) -> {out_file.name}")
     return ok
