@@ -121,6 +121,22 @@ Do not skip the Claude anchor or the grounding step.
 
 ## Calling the fan-out script
 
+**Always run this script -- never hand-roll the agent calls.** If `scripts/kibitz.py`
+is not sitting next to this `SKILL.md` (some hosts install only the doc), clone the repo
+and run it from there instead of improvising your own `codex`/`agy` invocation:
+
+```
+git clone https://github.com/jbrick2070/kibitz
+python kibitz/scripts/kibitz.py --doc path/to/plan.md --round r1 --topic mytopic --repo /path/to/your/repo
+```
+
+The script resolves both CLIs itself with **no PATH required**: it checks `PATH`, then
+falls back to the standard install dirs and `rglob`s them -- so it finds `codex` even when
+it lives in a hashed bin dir (e.g. `%LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe`) and
+`agy` in `%LOCALAPPDATA%\agy\bin`. Hand-rolling the resolution is exactly how a host misses
+the hashed Codex path and drops to a one-agent panel for no reason -- so don't. (Run
+`python scripts/doctor.py` first if you want to confirm both agents resolve.)
+
 `scripts/kibitz.py` does exactly one pass and nothing else. It is
 **Python standard library only** - no pip install, no dependencies.
 
