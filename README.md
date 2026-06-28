@@ -14,30 +14,21 @@ No API keys, no extra bills -- just the ChatGPT and Gemini logins you probably a
 > Built and tested on **Windows**. Mac/Linux will probably work (the commands are included) but aren't
 > tested yet -- if you try it, let me know how it goes.
 
-## One-click install (Claude Cowork)
+## The easy way (recommended): paste one prompt, your AI does the rest
 
-Grab [`kibitz.skill`](kibitz.skill) from this repo, open it in Claude Cowork, and click
-**Save skill**. That's it -- the whole skill (the `kibitz.py` script, the round prompts, and the
-ComfyUI profile) installs together in one click, so nothing is left out. Then you only need the two
-CLIs signed in (see below), and you can type `/kibitz` on any plan.
-
-## The easy way: let your AI install it for you
-
-Open Claude Cowork (or Claude Code) and paste this one prompt. It tells your AI to do the whole setup --
-**1) install the skill, 2) install the Codex CLI, 3) install the agy CLI** -- and stop only when you need
-to sign in. Then... poof, you're set.
-
-The same prompt also lives in [`install/setup-with-claude.md`](install/setup-with-claude.md).
-Copy it from there or straight from this block:
+This is how most people install it -- and it's the most reliable path. Open Claude Cowork (or Claude Code)
+and paste the prompt below. It tells your AI to do the whole setup -- **1) install the skill, 2) install the
+Codex CLI, 3) install the agy CLI** -- and stop only when you need to sign in. Then... poof, you're set.
+(Same prompt also lives in [`install/setup-with-claude.md`](install/setup-with-claude.md).)
 
 ```
 I want to use the "kibitz" skill so ChatGPT and Gemini can fact-check my code. Set it up for me from
 https://github.com/jbrick2070/kibitz -- do as much yourself as you can, and only stop when I need to
 sign in somewhere.
 
-1. INSTALL THE SKILL: clone https://github.com/jbrick2070/kibitz and put the kibitz skill folder where my
-   Claude looks for skills (you know where that is on this machine -- if you're not sure, check my Claude
-   settings / skills directory and place it there so typing `/kibitz` works).
+1. INSTALL THE SKILL: clone https://github.com/jbrick2070/kibitz to a folder I'll keep, and install the
+   skill from that clone into wherever my Claude looks for skills. KEEP the clone -- the kibitz script lives
+   in its `scripts/` folder and that's what actually runs the agents (so typing `/kibitz` works).
 2. INSTALL THE CODEX CLI (ChatGPT's coding agent, the `codex` command): if it's missing, on Windows run
    `powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"` (Mac/Linux:
    `npm install -g @openai/codex`), then tell me to run `codex` once and sign in with my ChatGPT account.
@@ -45,12 +36,20 @@ sign in somewhere.
    `irm https://antigravity.google/cli/install.ps1 | iex` (Mac/Linux:
    `curl -fsSL https://antigravity.google/cli/install.sh | bash`), then tell me to run `agy` once and sign
    in with my Google account.
-4. Run kibitz's `scripts/doctor.py` and show me the results -- every check should be green.
-5. Prove it works: run a tiny kibitz pass on a one-line sample plan and show me both ChatGPT's and Gemini's
-   reviews.
+4. Run kibitz's `scripts/doctor.py` and show me the results -- every check must be green (it confirms both
+   the `codex` and `agy` CLIs resolve, even when they live in their hashed Windows install dirs).
+5. Prove it works: run kibitz's `scripts/kibitz.py` for a tiny one-round pass on a one-line sample plan and
+   show me both ChatGPT's and Gemini's reviews. Always run kibitz through `scripts/kibitz.py` -- never
+   improvise your own codex/agy calls.
 
-When it's all green, give me a simple "you're ready" and remind me I just type `/kibitz` on any plan to use it.
+When it's all green, give me a simple "you're ready" and remind me I just type `/kibitz` on any plan.
 ```
+
+## Or install in one click (Claude Cowork)
+
+Prefer not to paste the prompt? Grab [`kibitz.skill`](kibitz.skill), open it in Claude Cowork, and click
+**Save skill** -- the whole skill (script, round prompts, ComfyUI profile) installs together in one click.
+You'll still need the two CLIs signed in (steps 2-3 of the prompt above).
 
 ## Prefer to do it by hand? Manual install
 
