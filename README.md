@@ -14,6 +14,13 @@ No API keys, no extra bills -- just the ChatGPT and Gemini logins you probably a
 > Built and tested on **Windows**. Mac/Linux will probably work (the commands are included) but aren't
 > tested yet -- if you try it, let me know how it goes.
 
+## One-click install (Claude Cowork)
+
+Grab [`kibitz.skill`](kibitz.skill) from this repo, open it in Claude Cowork, and click
+**Save skill**. That's it -- the whole skill (the `kibitz.py` script, the round prompts, and the
+ComfyUI profile) installs together in one click, so nothing is left out. Then you only need the two
+CLIs signed in (see below), and you can type `/kibitz` on any plan.
+
 ## The easy way: let your AI install it for you
 
 Open Claude Cowork (or Claude Code) and paste this one prompt. It tells your AI to do the whole setup --
