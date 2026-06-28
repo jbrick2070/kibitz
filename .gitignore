@@ -1,0 +1,5 @@
+kibitz-runs/
+__pycache__/
+*.pyc
+.DS_Store
+*.log
