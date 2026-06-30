@@ -5,6 +5,11 @@ domain invariants below. Cite the real node file/class for every claim; if you
 cannot see the code, write "verify: <what>" rather than asserting it. These are
 ComfyUI-specific failure modes the general rounds do not weight.
 
+If a repo-local `.kibitz/comfyui.local.md` profile is also appended, treat that
+file as the machine/workflow-specific overlay: GPU/VRAM budgets, canonical
+workflow paths, output directories, and user project rules there override generic
+assumptions here.
+
 1. NODE-CLASS CONTRACT
    - Every exported node class is registered in NODE_CLASS_MAPPINGS (and given a
      label in NODE_DISPLAY_NAME_MAPPINGS). A class that is defined but not mapped

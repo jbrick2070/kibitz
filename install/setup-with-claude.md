@@ -28,6 +28,9 @@ sign in somewhere.
    Anthropic-family lanes; `--driver none` or `--all-agents` -> all configured lanes. Use `--dry-run`
    first if you only need to verify selection without spending prompts. Always run kibitz through
    `scripts/kibitz.py` -- never improvise your own agent calls.
+7. If I am using Kibitz on a ComfyUI custom-node repo, offer to generate a local profile with
+   `scripts/comfyui_profile.py --repo <repo> --workflow <workflow.json> --write`. Explain that this writes
+   `.kibitz/comfyui.local.md`, which Kibitz auto-appends with the generic ComfyUI profile.
 
 When it's all green, give me a simple "you're ready" and remind me I just type `/kibitz` on any plan.
 ```

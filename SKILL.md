@@ -11,7 +11,7 @@ description: >-
   only the survivors into one improved plan across a fixed 4-round arc (r1 arc
   -> r2 coding -> r3 wiring -> r4 convergence). Fully hands-off, designed for
   Claude Cowork, Codex, and Antigravity on Windows; ships with an opt-in ComfyUI
-  custom-node profile.
+  custom-node profile plus a repo-local ComfyUI profile generator.
   Use when the user wants a second opinion / to pressure-test / harden /
   "round-robin" / "make bulletproof" a doc with their LOCAL agents, or says
   "kibitz", "/kibitz", "kibitz this", "get a second opinion", "run the local
@@ -98,24 +98,37 @@ rounds; 12 calls if `--driver none` or `--all-agents` runs all three external
 agents).
 
 **Domain profiles (optional).** The four round prompts are deliberately
-general. When the target is a specialized codebase, append the matching profile
-from `references/profiles/` to each round prompt so the agents also check that
-domain's invariants. Ships with `profiles/comfyui.md` (ComfyUI custom-node
-packs: tensor layouts, the node-class contract, VRAM/model-management,
-`IS_CHANGED` caching, import isolation). Add your own profiles the same way.
+general. When the target is a specialized codebase, use the matching profile so
+the agents also check that domain's invariants. Ships with `profiles/comfyui.md`
+(ComfyUI custom-node packs: tensor layouts, the node-class contract,
+VRAM/model-management, `IS_CHANGED` caching, import isolation). For ComfyUI repos,
+prefer generating a local overlay with:
+
+```
+python scripts/comfyui_profile.py --repo /path/to/repo --workflow workflows/main.json --write
+```
+
+That writes `.kibitz/comfyui.local.md` in the target repo. `scripts/kibitz.py`
+auto-appends both the shipped ComfyUI profile and that local overlay when the
+overlay exists. Use `--profile comfyui` to force the generic profile without a
+local overlay, or `--no-profiles` to disable profiles for a run. Add your own
+profiles the same way via `--profile path/to/profile.md`.
 
 ## The loop (steps 1-6 repeat for each of the 4 rounds)
 
 Do not skip the driver anchor or the grounding step.
 
 1. **Set up.** Identify the document, topic, and repo. Decide the round. If a
-   domain profile applies, note which one.
+   domain profile applies, note which one. For ComfyUI repos, check whether
+   `.kibitz/comfyui.local.md` exists; if it does not and workflow/VRAM facts
+   matter, generate it before fanning out.
 
-2. **The driver writes its anchor review.** Read the real source files. Write a
-   VERDICT + MUST-FIX + SHOULD-FIX review of the *current* plan in the same
-   format as the round prompt (`references/review-prompt-r<N>.md`). Label every
-   claim CONFIRMED / MISREAD / UNVERIFIABLE against the files you can actually
-   see. This is the first input to synthesis.
+2. **The driver writes its anchor review.** Read the real source files and any
+   applicable domain/local profile. Write a VERDICT + MUST-FIX + SHOULD-FIX
+   review of the *current* plan in the same format as the round prompt
+   (`references/review-prompt-r<N>.md`). Label every claim CONFIRMED / MISREAD /
+   UNVERIFIABLE against the files you can actually see. This is the first input
+   to synthesis.
 
 3. **Fan out - run the local agents.** Call the script (below). It writes the
    plan to `input.md`, then runs each selected agent non-interactively with the
@@ -174,6 +187,11 @@ python scripts/kibitz.py \
 - `--repo` defaults to the current directory, so if you run from the repo root
   you can omit it.
 - `--round {r1,r2,r3,r4}` picks the round prompt. Run all four across the arc.
+- `--profile comfyui` appends the shipped generic ComfyUI profile. `--profile
+  path/to/profile.md` appends a custom profile. Repeat as needed.
+- `.kibitz/comfyui.local.md` in the target repo is auto-detected; when present,
+  kibitz appends both the shipped ComfyUI profile and the local overlay.
+- `--no-profiles` disables both requested profiles and local auto-detection.
 - `--driver {auto,none,codex,claude,antigravity,agy}` selects the active driver.
   `auto` honors `KIBITZ_DRIVER` and known host environment hints. `none` means
   standalone/full external panel.
@@ -190,8 +208,30 @@ python scripts/kibitz.py \
   `python scripts/kibitz.py "harden the ending-mode plan" --round r1`.
 
 Output lands in `<repo>/kibitz-runs/<YYYY-MM-DD>-<topic>/<round>/` as
-`input.md`, `<agent>.md`, and `<agent>.log`. The driver then writes `final.md`
-there after grounding and synthesis.
+`input.md`, `profiles_used.txt`, `<agent>.md`, and `<agent>.log`. The driver
+then writes `final.md` there after grounding and synthesis.
+
+## ComfyUI local profile helper
+
+Generate or refresh a repo-local ComfyUI overlay with:
+
+```
+python scripts/comfyui_profile.py \
+  --repo /path/to/comfyui/custom_nodes/MyNodePack \
+  --workflow workflows/my_workflow.json \
+  --vram-budget-gb 16 \
+  --write
+```
+
+The helper records machine/repo facts such as GPU VRAM from `nvidia-smi`,
+canonical workflow summaries, files that mention `NODE_CLASS_MAPPINGS`,
+`INPUT_TYPES`, tensor/layout signals, VRAM/model-management signals, top-level
+heavy imports, and local reviewer instructions. It prints to stdout by default;
+`--write` writes `.kibitz/comfyui.local.md`.
+On write, it also adds `.kibitz/*.local.md` to the target repo's local
+`.git/info/exclude` unless `--no-git-exclude` is passed. Existing profiles are
+not overwritten unless `--force` is passed, so user notes in the local overlay
+are protected.
 
 ## First-run check and quota discipline
 

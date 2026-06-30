@@ -53,6 +53,7 @@ CLAUDE_HINT = (
 REQUIRED_FILES = [
     "SKILL.md",
     "scripts/kibitz.py",
+    "scripts/comfyui_profile.py",
     "COMPAT.md",
     "references/review-prompt-r1.md",
     "references/review-prompt-r2.md",
@@ -135,21 +136,24 @@ def main() -> int:
     pkg_files_ok = not missing
 
     parse_ok = True
-    parse_err = None
-    target = ROOT / "scripts" / "kibitz.py"
-    if target.is_file():
+    parse_errs = []
+    for rel in ("scripts/kibitz.py", "scripts/comfyui_profile.py"):
+        target = ROOT / rel
+        if not target.is_file():
+            parse_ok = False
+            parse_errs.append(f"{rel} is missing")
+            continue
         try:
             ast.parse(target.read_text(encoding="utf-8"))
         except SyntaxError as exc:
             parse_ok = False
-            parse_err = str(exc)
-    else:
-        parse_ok = False
-        parse_err = "scripts/kibitz.py is missing"
+            parse_errs.append(f"{rel}: {exc}")
     if parse_ok:
         print("    ok       scripts/kibitz.py is valid Python")
+        print("    ok       scripts/comfyui_profile.py is valid Python")
     else:
-        print(f"    FAILED   scripts/kibitz.py: {parse_err}")
+        for parse_err in parse_errs:
+            print(f"    FAILED   {parse_err}")
     package_ok = pkg_files_ok and parse_ok
     print()
 
@@ -199,7 +203,7 @@ def main() -> int:
                 print(f"    - Missing package files: {', '.join(missing)}")
                 print("      Re-clone the kibitz repo - some files did not copy.")
             if not parse_ok:
-                print(f"    - scripts/kibitz.py did not parse: {parse_err}")
+                print(f"    - Python entrypoint parse failed: {'; '.join(parse_errs)}")
         if agents_found == 0:
             print("    - Install at least one agent (Codex, Antigravity, or Claude Code;")
             print("      all three gives the fullest panel). See the hints above.")

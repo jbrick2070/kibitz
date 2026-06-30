@@ -53,6 +53,9 @@ sign in somewhere.
    Anthropic-family lanes; `--driver none` or `--all-agents` -> all configured lanes. Use `--dry-run`
    first if you only need to verify selection without spending prompts. Always run kibitz through
    `scripts/kibitz.py` -- never improvise your own agent calls.
+7. If I am using Kibitz on a ComfyUI custom-node repo, offer to generate a local profile with
+   `scripts/comfyui_profile.py --repo <repo> --workflow <workflow.json> --write`. Explain that this writes
+   `.kibitz/comfyui.local.md`, which Kibitz auto-appends with the generic ComfyUI profile.
 
 When it's all green, give me a simple "you're ready" and remind me I just type `/kibitz` on any plan.
 ```
@@ -171,6 +174,23 @@ python scripts/doctor.py
 
 Make every line green (see the next section for what each check means).
 
+**7. Optional: generate a local ComfyUI profile for a repo.** The shipped
+ComfyUI profile checks general invariants. Your machine still has local facts:
+GPU/VRAM, canonical workflow JSON, custom node files, output paths, and project
+rules. Generate a local overlay from the kibitz folder:
+
+```
+python scripts/comfyui_profile.py --repo C:\path\to\ComfyUI\custom_nodes\MyNodePack --workflow workflows\my_workflow.json --vram-budget-gb 16 --write
+```
+
+That writes `.kibitz\comfyui.local.md` inside the target repo with GPU/VRAM,
+workflow, node-mapping, tensor-layout, VRAM/model-management, and import signals.
+Kibitz auto-appends it, together with the generic ComfyUI profile, on future runs
+in that repo. The helper also adds `.kibitz/*.local.md` to the target repo's
+local `.git/info/exclude` so machine-specific facts stay out of commits.
+Existing local profiles are protected; add `--force` if you really want to
+regenerate one.
+
 ## Check everything works
 
 `scripts/doctor.py` is a quick preflight that tells you, in plain English,
@@ -184,8 +204,8 @@ they are installed. It checks:
   Same - it prints the install hint if missing.
 - **The `claude` command** - found on your PATH or in `%USERPROFILE%\.local\bin`.
   Same - it prints the install hint if missing.
-- **The kibitz files** - all the skill's pieces are present and the main script
-  is valid.
+- **The kibitz files** - all the skill's pieces are present and the Python
+  entry points are valid.
 
 At the end it prints **READY** or **NOT READY YET**. If only one agent is
 installed, it will still say you can run, just with a one-agent panel. The doctor
@@ -213,6 +233,9 @@ python scripts/kibitz.py --doc plan.md --round r1 --driver none
 - Repeated `--only` flags override driver-aware selection.
 - Add `--dry-run` to verify the selected driver/reviewer set without calling any
   agents.
+- Add `--profile comfyui` to force the generic ComfyUI profile. If
+  `.kibitz\comfyui.local.md` exists in the target repo, Kibitz auto-adds it and
+  the generic profile. Use `--no-profiles` for a profile-free run.
 
 ## How to use it day to day
 

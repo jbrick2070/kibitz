@@ -34,6 +34,7 @@ to a known file:
 
 Usage:
   python kibitz.py --doc plan.md --round r2 --repo /path/to/repo
+  python kibitz.py --doc plan.md --round r2 --repo /path/to/repo --profile comfyui
   python kibitz.py --doc plan.md --round r2 --repo /path/to/repo --driver codex
   python kibitz.py --doc plan.md --round r2 --repo /path/to/repo --driver none
   python kibitz.py --doc plan.md --round r3 --only codex --only claude
@@ -69,6 +70,10 @@ from pathlib import Path
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
 PROMPTS_DIR = SKILL_DIR / "references"
+PROFILE_ALIASES = {
+    "comfyui": PROMPTS_DIR / "profiles" / "comfyui.md",
+}
+LOCAL_COMFYUI_PROFILE = Path(".kibitz") / "comfyui.local.md"
 
 # Default: do NOT kill long agent jobs -- they batch and can take minutes. A ceiling can be
 # set per-run with --timeout (seconds); this module-level value is the fallback when unset.
@@ -172,6 +177,62 @@ def load_round_prompt(round_id: str) -> str:
         sys.exit(f"ERROR: round prompt not found: {path}\n"
                  f"Expected the skill's references/ folder next to scripts/.")
     return path.read_text(encoding="utf-8")
+
+
+def resolve_profile_path(raw: str, repo: Path) -> Path:
+    key = raw.strip().lower()
+    if key in PROFILE_ALIASES:
+        return PROFILE_ALIASES[key]
+    path = Path(raw)
+    if path.is_absolute():
+        return path
+    repo_path = repo / path
+    if repo_path.exists():
+        return repo_path
+    return SKILL_DIR / path
+
+
+def load_profiles(repo: Path, requested: list[str], no_profiles: bool):
+    """Return (profile_entries, combined_profile_text).
+
+    A repo-local .kibitz/comfyui.local.md opt-in file auto-enables both the
+    shipped generic ComfyUI profile and the local overlay. That keeps the user
+    profile small while preserving the durable ComfyUI invariants.
+    """
+    if no_profiles:
+        return [], ""
+
+    entries = []
+    seen = set()
+
+    def add(label: str, path: Path) -> None:
+        if not path.is_file():
+            sys.exit(f"ERROR: profile not found: {path}")
+        resolved = path.resolve()
+        if resolved in seen:
+            return
+        seen.add(resolved)
+        entries.append((label, resolved))
+
+    for raw in requested:
+        add(raw, resolve_profile_path(raw, repo))
+
+    local_profile = repo / LOCAL_COMFYUI_PROFILE
+    if local_profile.is_file():
+        add("comfyui", PROFILE_ALIASES["comfyui"])
+        add(str(LOCAL_COMFYUI_PROFILE), local_profile)
+
+    chunks = []
+    for label, path in entries:
+        chunks.append(
+            "\n\n"
+            "------------------------------------------------------------------\n"
+            f"DOMAIN PROFILE: {label}\n"
+            "------------------------------------------------------------------\n"
+            + path.read_text(encoding="utf-8").strip()
+            + "\n"
+        )
+    return entries, "".join(chunks)
 
 
 def run_codex(prompt: str, repo: Path, out_file: Path, log_file: Path) -> bool:
@@ -376,6 +437,11 @@ def main() -> None:
     ap.add_argument("--round", choices=["r1", "r2", "r3", "r4"], default="r1")
     ap.add_argument("--topic", default="kibitz", help="short slug for the run folder")
     ap.add_argument("--repo", type=Path, default=Path.cwd())
+    ap.add_argument("--profile", action="append", default=[], metavar="{comfyui|path}",
+                    help="append a domain profile. Use 'comfyui' for the shipped ComfyUI profile; "
+                         "repeatable. A repo-local .kibitz/comfyui.local.md auto-adds comfyui.")
+    ap.add_argument("--no-profiles", action="store_true",
+                    help="disable requested profiles and .kibitz/comfyui.local.md auto-detection.")
     ap.add_argument("--only", action="append", metavar="{codex,antigravity,agy,claude}",
                     help="run only this agent (repeatable). Overrides driver-aware defaults.")
     ap.add_argument("--driver", default="auto",
@@ -435,7 +501,12 @@ def main() -> None:
     input_path = run_dir / "input.md"
     input_path.write_text(input_text, encoding="utf-8")
 
+    profile_entries, profile_text = load_profiles(repo, args.profile, args.no_profiles)
+    profiles_used = "\n".join(f"{label}: {path}" for label, path in profile_entries) or "(none)"
+    (run_dir / "profiles_used.txt").write_text(profiles_used + "\n", encoding="utf-8")
+
     prompt = (load_round_prompt(args.round)
+              + profile_text
               + GROUNDING_FOOTER.format(input_path=input_path.as_posix()))
 
     print(f"Repo:       {repo}")
@@ -443,6 +514,7 @@ def main() -> None:
     print(f"Run folder: {run_dir}")
     print(f"Driver:     {driver or 'none'} ({driver_source if explicit_driver == 'auto' else 'explicit'})")
     print(f"Agents:     {', '.join(selected)}")
+    print(f"Profiles:   {', '.join(label for label, _path in profile_entries) if profile_entries else 'none'}")
     if args.dry_run:
         print("Dry run:    no agents called")
         return

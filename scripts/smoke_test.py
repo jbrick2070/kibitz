@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent
 REQUIRED_FILES = [
     "SKILL.md",
     "scripts/kibitz.py",
+    "scripts/comfyui_profile.py",
     "COMPAT.md",
     "references/review-prompt-r1.md",
     "references/review-prompt-r2.md",
@@ -43,14 +44,15 @@ def check_tree() -> list[str]:
 
 
 def check_parse() -> Optional[str]:
-    """AST-parse scripts/kibitz.py. Return an error string on failure, else None."""
-    target = ROOT / "scripts" / "kibitz.py"
-    if not target.is_file():
-        return "scripts/kibitz.py is missing"
-    try:
-        ast.parse(target.read_text(encoding="utf-8"))
-    except SyntaxError as exc:  # noqa: BLE001
-        return f"SyntaxError in kibitz.py: {exc}"
+    """AST-parse Python entry points. Return an error string on failure, else None."""
+    for rel in ("scripts/kibitz.py", "scripts/comfyui_profile.py"):
+        target = ROOT / rel
+        if not target.is_file():
+            return f"{rel} is missing"
+        try:
+            ast.parse(target.read_text(encoding="utf-8"))
+        except SyntaxError as exc:  # noqa: BLE001
+            return f"SyntaxError in {rel}: {exc}"
     return None
 
 
@@ -73,10 +75,11 @@ def main() -> int:
     tree_ok = not missing
 
     # (b) parse
-    print("\n[2] kibitz.py parse")
+    print("\n[2] Python entrypoint parse")
     parse_err = check_parse()
     if parse_err is None:
         print("    ok      scripts/kibitz.py is valid Python")
+        print("    ok      scripts/comfyui_profile.py is valid Python")
     else:
         print(f"    FAILED  {parse_err}")
     parse_ok = parse_err is None
