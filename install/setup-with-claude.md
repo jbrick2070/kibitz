@@ -30,7 +30,8 @@ sign in somewhere.
    `scripts/kibitz.py` -- never improvise your own agent calls.
 7. If I am using Kibitz on a ComfyUI custom-node repo, offer to generate a local profile with
    `scripts/comfyui_profile.py --repo <repo> --workflow <workflow.json> --write`. Explain that this writes
-   `.kibitz/comfyui.local.md`, which Kibitz auto-appends with the generic ComfyUI profile.
+   `.kibitz/comfyui.local.md`, auto-detecting local/cloud runtime hints, ComfyUI root, user prefs,
+   model paths/inventory, custom nodes, and active local ComfyUI servers when possible.
 
 When it's all green, give me a simple "you're ready" and remind me I just type `/kibitz` on any plan.
 ```

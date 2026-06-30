@@ -55,7 +55,8 @@ sign in somewhere.
    `scripts/kibitz.py` -- never improvise your own agent calls.
 7. If I am using Kibitz on a ComfyUI custom-node repo, offer to generate a local profile with
    `scripts/comfyui_profile.py --repo <repo> --workflow <workflow.json> --write`. Explain that this writes
-   `.kibitz/comfyui.local.md`, which Kibitz auto-appends with the generic ComfyUI profile.
+   `.kibitz/comfyui.local.md`, auto-detecting local/cloud runtime hints, ComfyUI root, user prefs,
+   model paths/inventory, custom nodes, and active local ComfyUI servers when possible.
 
 When it's all green, give me a simple "you're ready" and remind me I just type `/kibitz` on any plan.
 ```
@@ -176,20 +177,30 @@ Make every line green (see the next section for what each check means).
 
 **7. Optional: generate a local ComfyUI profile for a repo.** The shipped
 ComfyUI profile checks general invariants. Your machine still has local facts:
-GPU/VRAM, canonical workflow JSON, custom node files, output paths, and project
-rules. Generate a local overlay from the kibitz folder:
+GPU/VRAM, cloud-vs-local runtime, ComfyUI root, user prefs, model paths,
+canonical workflow JSON, custom nodes, output paths, active server ports, and
+project rules. Generate a local overlay from the kibitz folder:
 
 ```
 python scripts/comfyui_profile.py --repo C:\path\to\ComfyUI\custom_nodes\MyNodePack --workflow workflows\my_workflow.json --vram-budget-gb 16 --write
 ```
 
-That writes `.kibitz\comfyui.local.md` inside the target repo with GPU/VRAM,
-workflow, node-mapping, tensor-layout, VRAM/model-management, and import signals.
-Kibitz auto-appends it, together with the generic ComfyUI profile, on future runs
-in that repo. The helper also adds `.kibitz/*.local.md` to the target repo's
+That writes `.kibitz\comfyui.local.md` inside the target repo. It auto-detects
+ComfyUI roots by walking up from the repo and checking common env vars, probes
+local ComfyUI ports (`8000`, `8188` by default), summarizes `user\default`
+settings/workflows, reads `extra_model_paths*.yaml`, inventories model-like
+files, records Hugging Face cache model ids, and lists installed custom nodes.
+Kibitz auto-appends it, together with the generic ComfyUI profile, on future
+runs in that repo. The helper also adds `.kibitz/*.local.md` to the target repo's
 local `.git/info/exclude` so machine-specific facts stay out of commits.
 Existing local profiles are protected; add `--force` if you really want to
 regenerate one.
+
+Useful overrides for cloud pods or unusual installs:
+
+```
+python scripts/comfyui_profile.py --repo . --comfyui-root /workspace/ComfyUI --models-dir /runpod-volume/models --ports 8188 --write
+```
 
 ## Check everything works
 

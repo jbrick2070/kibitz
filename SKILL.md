@@ -108,7 +108,11 @@ prefer generating a local overlay with:
 python scripts/comfyui_profile.py --repo /path/to/repo --workflow workflows/main.json --write
 ```
 
-That writes `.kibitz/comfyui.local.md` in the target repo. `scripts/kibitz.py`
+That writes `.kibitz/comfyui.local.md` in the target repo. The helper tries to
+infer the user's actual ComfyUI setup: local/cloud runtime hints, ComfyUI root,
+Comfy Desktop executable, active localhost server ports, input/output/temp dirs,
+`user/default` settings and workflows, `extra_model_paths*.yaml`, model
+inventory, Hugging Face cache ids, and installed custom nodes. `scripts/kibitz.py`
 auto-appends both the shipped ComfyUI profile and that local overlay when the
 overlay exists. Use `--profile comfyui` to force the generic profile without a
 local overlay, or `--no-profiles` to disable profiles for a run. Add your own
@@ -224,14 +228,22 @@ python scripts/comfyui_profile.py \
 ```
 
 The helper records machine/repo facts such as GPU VRAM from `nvidia-smi`,
-canonical workflow summaries, files that mention `NODE_CLASS_MAPPINGS`,
-`INPUT_TYPES`, tensor/layout signals, VRAM/model-management signals, top-level
-heavy imports, and local reviewer instructions. It prints to stdout by default;
-`--write` writes `.kibitz/comfyui.local.md`.
+local/cloud runtime hints, ComfyUI root, active local server ports, user prefs,
+model paths/inventory, Hugging Face cache ids, installed custom nodes, canonical
+workflow summaries, files that mention `NODE_CLASS_MAPPINGS`, `INPUT_TYPES`,
+tensor/layout signals, VRAM/model-management signals, top-level heavy imports,
+and local reviewer instructions. It prints to stdout by default; `--write`
+writes `.kibitz/comfyui.local.md`.
 On write, it also adds `.kibitz/*.local.md` to the target repo's local
 `.git/info/exclude` unless `--no-git-exclude` is passed. Existing profiles are
 not overwritten unless `--force` is passed, so user notes in the local overlay
 are protected.
+
+Useful overrides for cloud pods or unusual installs:
+
+```
+python scripts/comfyui_profile.py --repo . --comfyui-root /workspace/ComfyUI --models-dir /runpod-volume/models --ports 8188 --write
+```
 
 ## First-run check and quota discipline
 

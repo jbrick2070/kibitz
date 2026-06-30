@@ -7,7 +7,8 @@ ComfyUI-specific failure modes the general rounds do not weight.
 
 If a repo-local `.kibitz/comfyui.local.md` profile is also appended, treat that
 file as the machine/workflow-specific overlay: GPU/VRAM budgets, canonical
-workflow paths, output directories, and user project rules there override generic
+workflow paths, ComfyUI roots, model paths/inventory, user prefs, output
+directories, active server details, and user project rules there override generic
 assumptions here.
 
 1. NODE-CLASS CONTRACT
