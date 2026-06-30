@@ -196,6 +196,22 @@ local `.git/info/exclude` so machine-specific facts stay out of commits.
 Existing local profiles are protected; add `--force` if you really want to
 regenerate one.
 
+Kibitz does **not** update `CLAUDE.md` automatically. If you want a safe pointer
+for Claude/Cowork to notice the local profile, print a snippet and paste it
+yourself:
+
+```
+python scripts/comfyui_profile.py --repo C:\path\to\repo --emit-claude-snippet
+```
+
+There is also an explicit opt-in writer. It only appends or updates a small
+marker-wrapped pointer block, never the full local profile, and it makes a
+timestamped backup when `CLAUDE.md` already exists:
+
+```
+python scripts/comfyui_profile.py --repo C:\path\to\repo --append-claude-md
+```
+
 Useful overrides for cloud pods or unusual installs:
 
 ```

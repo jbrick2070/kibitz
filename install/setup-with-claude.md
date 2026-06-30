@@ -32,6 +32,9 @@ sign in somewhere.
    `scripts/comfyui_profile.py --repo <repo> --workflow <workflow.json> --write`. Explain that this writes
    `.kibitz/comfyui.local.md`, auto-detecting local/cloud runtime hints, ComfyUI root, user prefs,
    model paths/inventory, custom nodes, and active local ComfyUI servers when possible.
+   Do not auto-edit `CLAUDE.md`; if I want Claude/Cowork to notice the profile, use
+   `--emit-claude-snippet` for a pasteable pointer, or only with my explicit approval use
+   `--append-claude-md` to write the small marker-wrapped pointer block with a backup.
 
 When it's all green, give me a simple "you're ready" and remind me I just type `/kibitz` on any plan.
 ```

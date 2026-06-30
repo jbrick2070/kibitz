@@ -239,6 +239,24 @@ On write, it also adds `.kibitz/*.local.md` to the target repo's local
 not overwritten unless `--force` is passed, so user notes in the local overlay
 are protected.
 
+Do **not** auto-update `CLAUDE.md` when generating a local profile. That file is
+high-authority repo/project instruction space. If the user wants Claude/Cowork
+to notice the profile, prefer:
+
+```
+python scripts/comfyui_profile.py --repo /path/to/repo --emit-claude-snippet
+```
+
+Only use this explicit opt-in when the user asks to write the pointer:
+
+```
+python scripts/comfyui_profile.py --repo /path/to/repo --append-claude-md
+```
+
+`--append-claude-md` writes only a marker-wrapped pointer to
+`.kibitz/comfyui.local.md`, never the full local profile, and creates a
+timestamped backup before changing an existing `CLAUDE.md`.
+
 Useful overrides for cloud pods or unusual installs:
 
 ```

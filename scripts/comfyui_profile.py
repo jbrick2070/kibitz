@@ -5,7 +5,11 @@ The generated file is intentionally local and machine-specific:
   .kibitz/comfyui.local.md
 
 Kibitz auto-appends that file, together with the shipped generic ComfyUI
-profile, when it exists in the target repo. Python standard library only.
+profile, when it exists in the target repo.
+
+CLAUDE.md is never edited by default. Use --emit-claude-snippet to print a
+pasteable pointer, or --append-claude-md for explicit opt-in pointer-only writes.
+Python standard library only.
 """
 from __future__ import annotations
 
@@ -25,7 +29,10 @@ from typing import Optional, Union
 
 
 DEFAULT_OUTPUT = Path(".kibitz") / "comfyui.local.md"
+DEFAULT_CLAUDE_MD = Path("CLAUDE.md")
 DEFAULT_COMFY_PORTS = (8000, 8188)
+CLAUDE_SNIPPET_BEGIN = "<!-- KIBITZ LOCAL COMFYUI PROFILE BEGIN -->"
+CLAUDE_SNIPPET_END = "<!-- KIBITZ LOCAL COMFYUI PROFILE END -->"
 EXCLUDE_DIRS = {
     ".git",
     ".hg",
@@ -1030,6 +1037,49 @@ def ensure_git_exclude(repo: Path) -> bool:
     return True
 
 
+def build_claude_snippet(profile_path: Path, repo: Path) -> str:
+    profile_ref = repo_relative(profile_path, repo)
+    return "\n".join(
+        [
+            CLAUDE_SNIPPET_BEGIN,
+            "## Kibitz Local ComfyUI Profile",
+            "",
+            "For machine-local ComfyUI review context, read:",
+            "",
+            f"`{profile_ref}`",
+            "",
+            "This is a pointer only. The profile is local, should stay uncommitted,",
+            "and does not replace shared repo policy or operator instructions.",
+            CLAUDE_SNIPPET_END,
+            "",
+        ]
+    )
+
+
+def append_claude_md_pointer(claude_md: Path, snippet: str) -> Optional[Path]:
+    claude_md.parent.mkdir(parents=True, exist_ok=True)
+    backup_path = None
+    if claude_md.exists():
+        stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        backup_path = claude_md.with_name(f"{claude_md.name}.bak-kibitz-{stamp}")
+        backup_path.write_text(claude_md.read_text(encoding="utf-8", errors="replace"),
+                               encoding="utf-8")
+        text = claude_md.read_text(encoding="utf-8", errors="replace")
+    else:
+        text = ""
+
+    start = text.find(CLAUDE_SNIPPET_BEGIN)
+    end = text.find(CLAUDE_SNIPPET_END)
+    if start != -1 and end != -1 and end > start:
+        end += len(CLAUDE_SNIPPET_END)
+        new_text = text[:start].rstrip() + "\n\n" + snippet.rstrip() + "\n" + text[end:].lstrip()
+    else:
+        prefix = text.rstrip()
+        new_text = (prefix + "\n\n" if prefix else "") + snippet
+    claude_md.write_text(new_text, encoding="utf-8")
+    return backup_path
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Generate .kibitz/comfyui.local.md for Kibitz's ComfyUI reviewer profile."
@@ -1055,18 +1105,44 @@ def main() -> int:
     parser.add_argument("--force", action="store_true", help="overwrite an existing output file")
     parser.add_argument("--no-git-exclude", action="store_true",
                         help="do not add .kibitz/*.local.md to the target repo's local git exclude")
+    parser.add_argument("--emit-claude-snippet", action="store_true",
+                        help="print a safe CLAUDE.md pointer snippet; does not modify CLAUDE.md")
+    parser.add_argument("--append-claude-md", action="store_true",
+                        help="explicit opt-in: append/update a pointer block in CLAUDE.md")
+    parser.add_argument("--claude-md", type=Path, default=DEFAULT_CLAUDE_MD,
+                        help="CLAUDE.md path for --append-claude-md, repo-relative by default")
     args = parser.parse_args()
 
     repo = args.repo.resolve()
     if not repo.is_dir():
         parser.error(f"--repo is not a directory: {repo}")
 
-    profile = build_profile(args, repo)
     output = resolve_repo_path(args.output, repo)
-    if not args.write:
-        print(profile)
+    snippet = build_claude_snippet(output, repo)
+    if args.emit_claude_snippet and not args.write and not args.append_claude_md:
+        print(snippet)
         return 0
 
+    if not args.write:
+        if args.append_claude_md and not output.exists():
+            print(
+                f"ERROR: {output} does not exist. Run with --write first, or include --write.",
+                file=sys.stderr,
+            )
+            return 2
+        if not args.append_claude_md:
+            print(build_profile(args, repo))
+        if args.emit_claude_snippet:
+            print("\n" + snippet)
+        if args.append_claude_md:
+            claude_md = resolve_repo_path(args.claude_md, repo)
+            backup_path = append_claude_md_pointer(claude_md, snippet)
+            print(f"Updated {claude_md} with Kibitz pointer block.")
+            if backup_path:
+                print(f"Backup: {backup_path}")
+        return 0
+
+    profile = build_profile(args, repo)
     if output.exists() and not args.force:
         print(f"ERROR: {output} already exists. Re-run with --force to overwrite it.", file=sys.stderr)
         return 2
@@ -1076,6 +1152,14 @@ def main() -> int:
     if not args.no_git_exclude and ensure_git_exclude(repo):
         print("Ensured .kibitz/*.local.md is ignored via .git/info/exclude")
     print("Kibitz will auto-append this profile for runs in this repo.")
+    if args.emit_claude_snippet:
+        print("\n" + snippet)
+    if args.append_claude_md:
+        claude_md = resolve_repo_path(args.claude_md, repo)
+        backup_path = append_claude_md_pointer(claude_md, snippet)
+        print(f"Updated {claude_md} with Kibitz pointer block.")
+        if backup_path:
+            print(f"Backup: {backup_path}")
     return 0
 
 
