@@ -29,15 +29,17 @@ Invocation (one review, read-only, file-handoff):
 codex exec -C <repo> --sandbox read-only --json --color never \
   -c model_reasoning_effort="high" \
   [-m <model>] \
-  -o <outfile> -
+  -o <outfile> "<prompt>"
 ```
 
-- The prompt is piped on **STDIN** (the trailing `-`).
+- The prompt is passed as the final argument. The subprocess stdin is closed
+  with `stdin=subprocess.DEVNULL` so an inherited stdin cannot hang the launch.
 - `--sandbox read-only` is a hard guarantee: the reviewer cannot edit the repo.
   Keep it. This is the safe primary lane.
 - `-o <outfile>` (a.k.a. `--output-last-message`) writes the final answer to a
   file. Success = exit code 0 AND that file exists and is non-empty. Never scrape
-  stdout - it is swallowed when redirected.
+  stdout first; Kibitz reads the file first and only uses stdout as a fallback
+  for harnesses that print a review without writing the output file.
 - `-C <repo>` sets the working directory the agent reads.
 
 ### Codex model + reasoning policy
@@ -58,7 +60,8 @@ codex exec -C <repo> --sandbox read-only --json --color never \
 Invocation (one review, file-handoff):
 
 ```
-agy --model <model> --dangerously-skip-permissions -p "<prompt + write directive>"
+agy --model <model> --dangerously-skip-permissions --print-timeout 5m \
+  -p "<prompt + write directive>"
 ```
 
 - `agy` has **no** read-only-that-still-writes sandbox, **no** `--headless`,
@@ -67,6 +70,11 @@ agy --model <model> --dangerously-skip-permissions -p "<prompt + write directive
 - Because `agy -p` swallows stdout when redirected, the review is delivered by
   **file-handoff**: the prompt instructs `agy` to WRITE its complete review to a
   specific output file with its own write tool, then stop.
+- On agy 1.0.13, captured subprocess launches have two known failure modes:
+  inherited stdin can hang startup (#508), and captured stdout can be empty even
+  with rc=0 (#76/#408). Kibitz closes stdin with `stdin=subprocess.DEVNULL`,
+  reads the output file first, and treats rc=0 with no file/stdout text as a
+  failed leg rather than an empty review.
 - That write requires `--dangerously-skip-permissions` (agy is otherwise
   interactive about file writes). This makes `agy` **UNSANDBOXED**: it is gated
   only by the strict review-only prompt directive. See SAFETY in `README.md` -
@@ -98,10 +106,13 @@ claude -p \
   --tools Read,Glob,Grep,Write \
   --add-dir <repo> \
   [--model <model>] \
-  [--effort <low|medium|high|max>]
+  [--effort <low|medium|high|max>] \
+  "<prompt + write directive>"
 ```
 
-- The prompt is sent on **STDIN**.
+- The prompt is passed as the final argument. The subprocess stdin is closed
+  with `stdin=subprocess.DEVNULL` for the same inherited-stdin safety as the
+  other lanes.
 - Claude Code has no native `-o` / `--output-last-message` equivalent, so the
   review is delivered by **file-handoff**: the prompt instructs Claude to WRITE
   its complete review to a specific output file, then stop.

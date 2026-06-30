@@ -23,14 +23,14 @@ WHY FILE-HANDOFF (not stdout scraping): some CLIs swallow stdout when their outp
 is redirected, so success is judged by EXIT CODE + an output FILE existing and being
 non-empty, never by terminal text. Each file-handoff agent writes its FINAL review
 to a known file:
-  * Codex: native -o/--output-last-message <file>; prompt piped via stdin; sandbox
+  * Codex: native -o/--output-last-message <file>; prompt passed as an arg; sandbox
     read-only (the reviewer literally cannot edit -- the correct posture for a reviewer).
   * Antigravity: `agy` has no such flag and its -p swallows stdout, so we INSTRUCT it
     in the prompt to WRITE its review to <file> with its own write tool;
     --dangerously-skip-permissions auto-approves that one write (agy has no
     read-only-that-still-writes sandbox).
   * Claude: no native -o flag, so it uses the same file-handoff contract as
-    Antigravity. The prompt is sent on stdin; Claude may write only <file>.
+    Antigravity. The prompt is passed as an arg; Claude may write only <file>.
 
 Usage:
   python kibitz.py --doc plan.md --round r2 --repo /path/to/repo
@@ -112,6 +112,7 @@ CODEX_MODEL_PREFERENCE = ("gpt-5.5", "gpt-5-codex", "gpt-5")
 # DISTINCT model families; agy=Opus duplicates Claude and agy=gpt-oss duplicates
 # Codex, collapsing the panel's whole value.
 AGY_MODEL = os.environ.get("KIBITZ_AGY_MODEL", "gemini-3.5-pro")
+AGY_PRINT_TIMEOUT = os.environ.get("KIBITZ_AGY_PRINT_TIMEOUT", "5m")
 CLAUDE_MODEL = os.environ.get("KIBITZ_CLAUDE_MODEL", "sonnet")
 CLAUDE_EFFORT = os.environ.get("KIBITZ_CLAUDE_EFFORT", "high")
 
@@ -121,8 +122,9 @@ def pick_codex_model(exe: str, repo: Path, run_dir: Path):
     None (let Codex use its default). Never picks mini/fast/spark unless nothing else exists."""
     import json as _json
     try:
-        raw = (subprocess.run([exe, "debug", "models"], cwd=str(repo), capture_output=True,
-                              text=True, encoding="utf-8", errors="replace", timeout=120).stdout
+        raw = (subprocess.run([exe, "debug", "models"], cwd=str(repo), stdin=subprocess.DEVNULL,
+                              capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=120).stdout
                or "")
     except Exception:  # noqa: BLE001
         return None
@@ -159,8 +161,9 @@ Hard rules:
 Return ONLY your review in the structure specified above. No preamble.
 """
 
-# Antigravity has no --output-last-message flag, so the file-handoff is injected into the prompt.
-AGY_OUTPUT_DIRECTIVE = """
+# Antigravity and Claude have no --output-last-message flag, so file-handoff is injected into
+# their prompt. Codex uses its native -o channel, then the same collector verifies the file.
+FILE_OUTPUT_DIRECTIVE = """
 
 ------------------------------------------------------------------
 OUTPUT CONTRACT (MANDATORY): You are a READ-ONLY reviewer. Do NOT modify, create, or delete any
@@ -169,6 +172,46 @@ structure specified above) to this exact path, then stop:
   {out_path}
 Do not rely on stdout. After writing the file, exit immediately.
 """
+
+
+def write_process_log(log_file: Path, stdout_text: str, stderr_text: str, extra: str = "") -> None:
+    chunks = []
+    if extra:
+        chunks.append(extra.rstrip())
+    if stdout_text:
+        chunks.append("STDOUT:\n" + stdout_text.rstrip())
+    if stderr_text:
+        chunks.append("STDERR:\n" + stderr_text.rstrip())
+    log_file.write_text(("\n\n".join(chunks) + ("\n" if chunks else "")), encoding="utf-8")
+
+
+def append_process_log(log_file: Path, text: str) -> None:
+    with log_file.open("a", encoding="utf-8") as log:
+        log.write(text.rstrip() + "\n")
+
+
+def collect_review(
+    name: str,
+    out_file: Path,
+    log_file: Path,
+    returncode: int,
+    stdout_text: str = "",
+) -> bool:
+    """Read the review from the explicit file first, then stdout as a fallback."""
+    review = ""
+    if out_file.exists():
+        review = out_file.read_text(encoding="utf-8", errors="replace").strip()
+    if not review and stdout_text.strip():
+        review = stdout_text.strip()
+    if review:
+        out_file.write_text(review + "\n", encoding="utf-8")
+    ok = returncode == 0 and bool(review)
+    if returncode == 0 and not review:
+        msg = (f"{name}: rc=0 but NO review text (agy #76 / strict read-only). "
+               "Failing this leg.")
+        print(f"  [FAILED] {msg}")
+        append_process_log(log_file, msg)
+    return ok
 
 
 def load_round_prompt(round_id: str) -> str:
@@ -257,22 +300,22 @@ def run_codex(prompt: str, repo: Path, out_file: Path, log_file: Path) -> bool:
                "-c", 'model_reasoning_effort="%s"' % reff]
         if model:
             cmd += ["-m", model]
-        cmd += ["-o", str(out_file), "-"]
+        cmd += ["-o", str(out_file), prompt]
         print(f"  -> codex: model={model or 'default'} reasoning={reff} -> {out_file.name}")
-        with log_file.open("w", encoding="utf-8") as log:
-            return subprocess.run(cmd, input=prompt, text=True, cwd=str(repo),
-                                  stdout=log, stderr=subprocess.STDOUT,
-                                  encoding="utf-8", errors="replace",
-                                  timeout=PER_AGENT_TIMEOUT)
+        proc = subprocess.run(cmd, stdin=subprocess.DEVNULL, text=True, cwd=str(repo),
+                              capture_output=True, encoding="utf-8", errors="replace",
+                              timeout=PER_AGENT_TIMEOUT)
+        write_process_log(log_file, proc.stdout or "", proc.stderr or "")
+        return proc
 
     proc = _run(CODEX_REASONING)
-    ok = proc.returncode == 0 and out_file.exists() and out_file.stat().st_size > 0
+    ok = collect_review("codex", out_file, log_file, proc.returncode, proc.stdout or "")
     if not ok and CODEX_REASONING == "xhigh":
         print("  .. xhigh failed -> retry once with high")
         (run_dir / "codex_reasoning_selected.txt").write_text("high (xhigh failed)",
                                                               encoding="utf-8")
         proc = _run("high")
-        ok = proc.returncode == 0 and out_file.exists() and out_file.stat().st_size > 0
+        ok = collect_review("codex", out_file, log_file, proc.returncode, proc.stdout or "")
     print(f"  [{'OK' if ok else 'FAILED'}] codex (rc={proc.returncode}, model={model or 'default'})")
     return ok
 
@@ -288,48 +331,30 @@ def run_agy(prompt: str, repo: Path, out_file: Path, log_file: Path) -> bool:
         return False
     if out_file.exists():
         out_file.unlink()
-    full = prompt + AGY_OUTPUT_DIRECTIVE.format(out_path=str(out_file))
-    cmd = [exe, "--dangerously-skip-permissions", "-p", full]
+    full = prompt + FILE_OUTPUT_DIRECTIVE.format(out_path=str(out_file))
+    cmd = [exe, "--dangerously-skip-permissions", "--print-timeout", AGY_PRINT_TIMEOUT, "-p", full]
     if AGY_MODEL:
         cmd[1:1] = ["--model", AGY_MODEL]
     (out_file.parent / "agy_model_selected.txt").write_text(
         AGY_MODEL or "(agy default)", encoding="utf-8")
     print(f"  -> antigravity: model={AGY_MODEL or 'default'} file-handoff -> {out_file.name}")
     try:
-        if os.name == "nt":
-            # agy 1.0.13's CLI runs a console/TTY check at boot and HANGS FOREVER when launched
-            # with no console -- i.e. from any detached/background process (CI, a server, an IDE
-            # plugin, Desktop Commander). Give it its OWN console so the check passes. We never
-            # read agy's stdout (the review arrives via the file-handoff below), so there is no
-            # pipe to block on; the console is created hidden to avoid a flashing window.
-            CREATE_NEW_CONSOLE = 0x00000010
-            si = subprocess.STARTUPINFO()
-            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            si.wShowWindow = 0  # SW_HIDE
-            log_file.write_text(
-                "agy launched in its own hidden console (Windows TTY-check workaround); the "
-                "review arrives via the file-handoff, so agy's stdout is not captured here.\n",
-                encoding="utf-8")
-            proc = subprocess.run(cmd, cwd=str(repo),
-                                  creationflags=CREATE_NEW_CONSOLE, startupinfo=si,
-                                  timeout=PER_AGENT_TIMEOUT)
-        else:
-            with log_file.open("w", encoding="utf-8") as log:
-                proc = subprocess.run(cmd, text=True, cwd=str(repo),
-                                      stdout=log, stderr=subprocess.STDOUT,
-                                      encoding="utf-8", errors="replace",
-                                      timeout=PER_AGENT_TIMEOUT)
+        proc = subprocess.run(cmd, stdin=subprocess.DEVNULL, text=True, cwd=str(repo),
+                              capture_output=True, encoding="utf-8", errors="replace",
+                              timeout=PER_AGENT_TIMEOUT)
+        write_process_log(log_file, proc.stdout or "", proc.stderr or "")
     except subprocess.TimeoutExpired:
         print(f"  [FAILED] antigravity (timeout after {PER_AGENT_TIMEOUT}s)")
         return False
-    ok = proc.returncode == 0 and out_file.exists() and out_file.stat().st_size > 0
+    ok = collect_review("antigravity", out_file, log_file, proc.returncode,
+                        getattr(proc, "stdout", "") or "")
     print(f"  [{'OK' if ok else 'FAILED'}] antigravity (rc={proc.returncode}) -> {out_file.name}")
     return ok
 
 
 def run_claude(prompt: str, repo: Path, out_file: Path, log_file: Path) -> bool:
     """Claude Code: no native -o flag, so file-handoff like Antigravity.
-    Prompt goes on stdin; --dangerously-skip-permissions approves the output write."""
+    Prompt is passed as an arg; --dangerously-skip-permissions approves the output write."""
     exe = _which("claude", _WIN_CLAUDE_BIN)
     if exe is None:
         log_file.write_text(r"claude not found on PATH or in %USERPROFILE%\.local\bin",
@@ -338,7 +363,7 @@ def run_claude(prompt: str, repo: Path, out_file: Path, log_file: Path) -> bool:
         return False
     if out_file.exists():
         out_file.unlink()
-    full = prompt + AGY_OUTPUT_DIRECTIVE.format(out_path=str(out_file))
+    full = prompt + FILE_OUTPUT_DIRECTIVE.format(out_path=str(out_file))
     cmd = [
         exe,
         "-p",
@@ -352,21 +377,21 @@ def run_claude(prompt: str, repo: Path, out_file: Path, log_file: Path) -> bool:
         cmd += ["--model", CLAUDE_MODEL]
     if CLAUDE_EFFORT:
         cmd += ["--effort", CLAUDE_EFFORT]
+    cmd.append(full)
     (out_file.parent / "claude_model_selected.txt").write_text(
         CLAUDE_MODEL or "(claude default)", encoding="utf-8")
     (out_file.parent / "claude_effort_selected.txt").write_text(
         CLAUDE_EFFORT or "(claude default)", encoding="utf-8")
     print(f"  -> claude: model={CLAUDE_MODEL or 'default'} effort={CLAUDE_EFFORT or 'default'} file-handoff -> {out_file.name}")
     try:
-        with log_file.open("w", encoding="utf-8") as log:
-            proc = subprocess.run(cmd, input=full, cwd=str(repo), stdout=log,
-                                  stderr=subprocess.STDOUT, text=True,
-                                  encoding="utf-8", errors="replace",
-                                  timeout=PER_AGENT_TIMEOUT)
+        proc = subprocess.run(cmd, stdin=subprocess.DEVNULL, cwd=str(repo),
+                              capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=PER_AGENT_TIMEOUT)
+        write_process_log(log_file, proc.stdout or "", proc.stderr or "")
     except subprocess.TimeoutExpired:
         print(f"  [FAILED] claude (timeout after {PER_AGENT_TIMEOUT}s)")
         return False
-    ok = proc.returncode == 0 and out_file.exists() and out_file.stat().st_size > 0
+    ok = collect_review("claude", out_file, log_file, proc.returncode, proc.stdout or "")
     print(f"  [{'OK' if ok else 'FAILED'}] claude (rc={proc.returncode}) -> {out_file.name}")
     return ok
 
@@ -543,13 +568,13 @@ if __name__ == "__main__":
 
 # ---------------------------------------------------------------------------
 # IMPLEMENTATION NOTES (see COMPAT.md for the proven versions and the flags caveat):
-#  - Codex: `codex exec -C <repo> --sandbox read-only --json --color never -o <file> -`
-#    (prompt on stdin) writes the final answer to <file>.
+#  - Codex: `codex exec -C <repo> --sandbox read-only --json --color never -o <file> <prompt>`
+#    writes the final answer to <file>.
 #  - Antigravity: headless `agy -p` swallows stdout when redirected; the file-handoff
 #    (tell agy to write its review to <file> + --dangerously-skip-permissions) works.
 #    The `| clip` clipboard bypass does NOT work (still a stdout redirect = empty).
 #  - Claude: `claude -p` has no native -o flag, so it uses the same file-handoff
-#    pattern as agy. Prompt is sent on stdin.
+#    pattern as agy. Prompt is passed as an arg.
 #  - Never scrape terminal output for DONE/FINISHED. Never set a short subprocess timeout
 #    unless you explicitly want to bail on a hung agent (use --timeout for that).
 # ---------------------------------------------------------------------------
