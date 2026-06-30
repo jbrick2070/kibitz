@@ -1,15 +1,15 @@
 # kibitz
 
 **Hey -- do you use Claude Cowork to vibe-code your ComfyUI workflows on Windows?** Then you can have
-**ChatGPT and Gemini fact-check your work and give it a second look**, right inside Cowork, with this
-little skill.
+**ChatGPT, Gemini, and Claude Code fact-check your work and give it a second look**, right inside
+your local agent flow, with this little skill.
 
-Here's the trick: they don't just read a snippet you paste in -- Codex (ChatGPT) and Antigravity (Gemini)
-each read your *whole* repo on your own machine, critique your plan, and then Claude checks everything they
-say against your real code and throws out anything that isn't true. A real second and third opinion that
-can't bluff, because they actually read the code.
+Here's the trick: they don't just read a snippet you paste in -- Codex (ChatGPT), Antigravity (Gemini),
+and Claude Code each read your *whole* repo on your own machine, critique your plan, and then the active
+driver checks everything they say against your real code and throws out anything that isn't true. A real
+three-way second opinion that can't bluff, because they actually read the code.
 
-No API keys, no extra bills -- just the ChatGPT and Gemini logins you probably already have.
+No API keys -- just the ChatGPT, Gemini/Google, and Claude logins you probably already have.
 
 > Built and tested on **Windows**. Mac/Linux will probably work (the commands are included) but aren't
 > tested yet -- if you try it, let me know how it goes.
@@ -18,11 +18,12 @@ No API keys, no extra bills -- just the ChatGPT and Gemini logins you probably a
 
 This is how most people install it -- and it's the most reliable path. Open Claude Cowork (or Claude Code)
 and paste the prompt below. It tells your AI to do the whole setup -- **1) install the skill, 2) install the
-Codex CLI, 3) install the agy CLI** -- and stop only when you need to sign in. Then... poof, you're set.
+Codex CLI, 3) install the agy CLI, 4) install/check Claude Code CLI** -- and stop only when you need to sign
+in. Then... poof, you're set.
 (Same prompt also lives in [`install/setup-with-claude.md`](install/setup-with-claude.md).)
 
 ```
-I want to use the "kibitz" skill so ChatGPT and Gemini can fact-check my code. Set it up for me from
+I want to use the "kibitz" skill so ChatGPT, Gemini, and Claude Code can fact-check my code. Set it up for me from
 https://github.com/jbrick2070/kibitz -- do as much yourself as you can, and only stop when I need to
 sign in somewhere.
 
@@ -36,11 +37,13 @@ sign in somewhere.
    `irm https://antigravity.google/cli/install.ps1 | iex` (Mac/Linux:
    `curl -fsSL https://antigravity.google/cli/install.sh | bash`), then tell me to run `agy` once and sign
    in with my Google account.
-4. Run kibitz's `scripts/doctor.py` and show me the results -- every check must be green (it confirms both
-   the `codex` and `agy` CLIs resolve, even when they live in their hashed Windows install dirs).
-5. Prove it works: run kibitz's `scripts/kibitz.py` for a tiny one-round pass on a one-line sample plan and
-   show me both ChatGPT's and Gemini's reviews. Always run kibitz through `scripts/kibitz.py` -- never
-   improvise your own codex/agy calls.
+4. INSTALL OR CHECK CLAUDE CODE CLI (Claude's coding agent, the `claude` command): if it's missing, install
+   Claude Code, then tell me to run `claude` once and sign in with my Claude account.
+5. Run kibitz's `scripts/doctor.py` and show me the results -- every check must be green (it confirms
+   `codex`, `agy`, and `claude` resolve, even when they live in their Windows install dirs).
+6. Prove it works: run kibitz's `scripts/kibitz.py` for a tiny one-round pass on a one-line sample plan and
+   show me ChatGPT's, Gemini's, and Claude's reviews. Always run kibitz through `scripts/kibitz.py` -- never
+   improvise your own agent calls.
 
 When it's all green, give me a simple "you're ready" and remind me I just type `/kibitz` on any plan.
 ```
@@ -49,12 +52,12 @@ When it's all green, give me a simple "you're ready" and remind me I just type `
 
 Prefer not to paste the prompt? Grab [`kibitz.skill`](kibitz.skill), open it in Claude Cowork, and click
 **Save skill** -- the whole skill (script, round prompts, ComfyUI profile) installs together in one click.
-You'll still need the two CLIs signed in (steps 2-3 of the prompt above).
+You'll still need the three CLIs signed in (steps 2-4 of the prompt above).
 
 ## Prefer to do it by hand? Manual install
 
 If you would rather drive it yourself, here are the same steps as plain commands.
-Same order as the prompt: **skill first, then the two CLIs.**
+Same order as the prompt: **skill first, then the three CLIs.**
 
 **1. Get kibitz and install the skill.** Clone the repo:
 
@@ -131,7 +134,25 @@ If that prints `Python 3.9` or higher, you are set. If not, install Python from
   (On Windows it installs under `%LOCALAPPDATA%\agy\bin`.) Docs:
   [antigravity.google/docs/cli-getting-started](https://antigravity.google/docs/cli-getting-started).
 
-**5. Run the doctor.** From inside the kibitz folder:
+**5. Install Claude Code (Claude's coding agent) and sign in.**
+
+- Install Claude Code from Anthropic, then run:
+
+  ```
+  claude
+  ```
+
+- Sign in with your Claude account.
+
+- Check it worked:
+
+  ```
+  claude --version
+  ```
+
+  (On this Windows setup it commonly lives under `%USERPROFILE%\.local\bin`.)
+
+**6. Run the doctor.** From inside the kibitz folder:
 
 ```
 python scripts/doctor.py
@@ -150,6 +171,8 @@ they are installed. It checks:
   If it is missing, the doctor prints the exact install command.
 - **The `agy` command** - found on your PATH or in `%LOCALAPPDATA%\agy\bin`.
   Same - it prints the install hint if missing.
+- **The `claude` command** - found on your PATH or in `%USERPROFILE%\.local\bin`.
+  Same - it prints the install hint if missing.
 - **The kibitz files** - all the skill's pieces are present and the main script
   is valid.
 
@@ -159,8 +182,8 @@ cannot check whether you are signed in (that only happens the first time you run
 each agent yourself) - it will remind you of that.
 
 Then the tiny real test: in Claude, point at a short plan and say `/kibitz` (or
-just "run kibitz"). You will see both agents go off, read the repo, and return a
-review.
+just "run kibitz"). You will see the local agents go off, read the repo, and
+return reviews.
 
 ## How to use it day to day
 
@@ -174,20 +197,22 @@ then walks a fixed **4-round arc**, each round with a different lens:
 | r3 | The wiring - do the pieces connect and sequence correctly? |
 | r4 | Final pass - anything still broken? |
 
-In every round, the two agents read your real code and write their own reviews,
-and then **Claude is the judge**: it grounds every claim each agent makes against
-your actual code, throws out the ones that are wrong, and folds the rest into a
-better version of the plan. The output lands in a `kibitz-runs\` folder inside
-your repo, so you have a full record of what was suggested, kept, and rejected.
+In every round, the three agents read your real code and write their own reviews,
+and then **the active driver is the judge**: it grounds every claim each agent
+makes against your actual code, throws out the ones that are wrong, and folds the
+rest into a better version of the plan. The output lands in a `kibitz-runs\`
+folder inside your repo, so you have a full record of what was suggested, kept,
+and rejected.
 
 ## Troubleshooting
 
 | You see... | Do this |
 |------------|---------|
-| `codex` or `agy` "not found" | Close and reopen your terminal so it picks up the new PATH. If it is still missing, it may be installed at `%LOCALAPPDATA%\OpenAI\Codex` (Codex) or `%LOCALAPPDATA%\agy\bin` (Antigravity). |
-| "not signed in" / it asks you to log in | Run the bare command once on its own - `codex` or `agy` - and complete the sign-in. After that, kibitz can use it. |
+| `codex`, `agy`, or `claude` "not found" | Close and reopen your terminal so it picks up the new PATH. If it is still missing, it may be installed at `%LOCALAPPDATA%\OpenAI\Codex` (Codex), `%LOCALAPPDATA%\agy\bin` (Antigravity), or `%USERPROFILE%\.local\bin` (Claude Code). |
+| "not signed in" / it asks you to log in | Run the bare command once on its own - `codex`, `agy`, or `claude` - and complete the sign-in. After that, kibitz can use it. |
 | The wrong `codex` got installed | If you installed the plain `codex` npm package by mistake, uninstall it (`npm uninstall -g codex`) and install the scoped one: `npm install -g @openai/codex`. |
-| Only one agent is installed | Kibitz still runs with the one you have (a "degraded" one-agent panel). It only fails if *both* are missing. |
+| Only one agent is installed | Kibitz still runs with the one you have (a "degraded" one-agent panel). It only fails if all agents are missing. |
+| Antigravity is out of quota | Use `--only codex --only claude` for that round. |
 
 ## A note on safety
 
@@ -198,6 +223,8 @@ but it matters.
 - **Antigravity runs without a sandbox.** To hand its review back, kibitz lets it
   write that one review file, which means it is technically allowed to touch the
   disk. It is told, firmly, to review only and write nothing else.
+- **Claude Code also uses a write-approved file-handoff.** It is restricted to
+  Read/Glob/Grep/Write and told to write only its review file.
 - Because of that, if you are ever feeding in input you do not fully trust, run it
   in a **throwaway git worktree** (a disposable copy of your repo) rather than your
   live project.

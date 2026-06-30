@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """smoke_test.py - offline package check for the kibitz skill.
 
-Verifies the package is structurally sound WITHOUT calling Codex or Antigravity:
+Verifies the package is structurally sound WITHOUT calling Codex, Antigravity,
+or Claude:
   (a) the expected file tree exists,
   (b) scripts/kibitz.py is valid Python (AST parse),
-  (c) `codex` and `agy` availability on PATH is reported (soft warning, not a failure).
+  (c) `codex`, `agy`, and `claude` availability on PATH is reported
+      (soft warning, not a failure).
 
 Exit 0 if the tree + parse pass; exit 1 otherwise. Python standard library only.
 """
@@ -53,7 +55,7 @@ def check_parse() -> str | None:
 
 def check_agents() -> dict[str, bool]:
     """Soft check: is each agent CLI on PATH? Reported, never fatal."""
-    return {name: shutil.which(name) is not None for name in ("codex", "agy")}
+    return {name: shutil.which(name) is not None for name in ("codex", "agy", "claude")}
 
 
 def main() -> int:

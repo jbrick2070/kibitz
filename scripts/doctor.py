@@ -4,15 +4,17 @@
 Run this BEFORE you try to use kibitz. It tells you, in plain English, whether
 your machine has everything kibitz needs - and if not, exactly what to install.
 
-It checks four things WITHOUT ever calling the agents (so it is fast and safe):
+It checks five things WITHOUT ever calling the agents (so it is fast and safe):
   1. Python is new enough (3.9 or later).
   2. The OpenAI Codex CLI (the `codex` command) is installed.
   3. The Google Antigravity CLI (the `agy` command) is installed.
-  4. The kibitz package files are all present and the main script parses.
+  4. The Anthropic Claude Code CLI (the `claude` command) is installed.
+  5. The kibitz package files are all present and the main script parses.
 
-It does NOT check whether you are signed in to Codex or Antigravity - that can
-only happen when you run them yourself the first time. The doctor confirms they
-are INSTALLED; you will confirm sign-in the first time you run them.
+It does NOT check whether you are signed in to Codex, Antigravity, or Claude -
+that can only happen when you run them yourself the first time. The doctor
+confirms they are INSTALLED; you will confirm sign-in the first time you run
+them.
 
 Exit code 0 means "READY". Exit code 1 means "not ready yet, here is what to fix".
 Python standard library only - no pip install, no dependencies.
@@ -29,6 +31,7 @@ ROOT = Path(__file__).resolve().parent.parent
 # Standard per-user install locations on Windows (not user-specific paths).
 WIN_CODEX_DIR = os.path.expandvars(r"%LOCALAPPDATA%\OpenAI\Codex")
 WIN_AGY_DIR = os.path.expandvars(r"%LOCALAPPDATA%\agy\bin")
+WIN_CLAUDE_DIR = os.path.expandvars(r"%USERPROFILE%\.local\bin")
 
 CODEX_HINT = (
     "Install Codex - Windows: powershell -ExecutionPolicy ByPass -c "
@@ -40,6 +43,10 @@ AGY_HINT = (
     "Install Antigravity - Windows: irm https://antigravity.google/cli/install.ps1 | iex  |  "
     "Mac/Linux: curl -fsSL https://antigravity.google/cli/install.sh | bash. "
     "Then run `agy` once and sign in with your Google account."
+)
+CLAUDE_HINT = (
+    "Install Claude Code from Anthropic, then run `claude` once and sign in. "
+    "On this Windows setup it is usually under %USERPROFILE%\\.local\\bin."
 )
 
 # The package files kibitz needs to run.
@@ -107,8 +114,18 @@ def main() -> int:
         print(f"            {AGY_HINT}")
     print()
 
-    # --- 4. kibitz package files + script parse ----------------------------
-    print("[4] kibitz package files")
+    # --- 4. Claude Code CLI ------------------------------------------------
+    claude_path = find_agent("claude", WIN_CLAUDE_DIR)
+    print("[4] Anthropic Claude Code CLI (the `claude` command)")
+    if claude_path:
+        print(f"    FOUND   {claude_path}")
+    else:
+        print("    NOT FOUND")
+        print(f"            {CLAUDE_HINT}")
+    print()
+
+    # --- 5. kibitz package files + script parse ----------------------------
+    print("[5] kibitz package files")
     missing = []
     for rel in REQUIRED_FILES:
         present = (ROOT / rel).is_file()
@@ -137,23 +154,37 @@ def main() -> int:
     print()
 
     # --- summary -----------------------------------------------------------
-    agents_found = int(bool(codex_path)) + int(bool(agy_path))
+    agent_paths = {
+        "Codex": codex_path,
+        "Antigravity": agy_path,
+        "Claude Code": claude_path,
+    }
+    installed_agents = [name for name, path in agent_paths.items() if path]
+    missing_agents = [name for name, path in agent_paths.items() if not path]
+    agents_found = len(installed_agents)
     ready = py_ok and package_ok and agents_found >= 1
 
     print("=" * 64)
     if ready:
         print("  RESULT: READY")
         print()
-        if agents_found == 2:
-            print("  Both agents are installed. You will get a full two-agent panel.")
+        if agents_found == 3:
+            print("  Codex, Antigravity, and Claude Code are installed.")
+            print("  The default three-agent panel is ready.")
         else:
-            only = "Codex" if codex_path else "Antigravity"
-            missing_one = "Antigravity" if codex_path else "Codex"
-            print(f"  Only {only} is installed, so you can run, but you'll get a")
-            print(f"  one-agent panel. Install {missing_one} for the full second opinion.")
+            print(f"  Installed agents: {', '.join(installed_agents)}")
+            print(f"  Missing agents: {', '.join(missing_agents)}")
+            if codex_path and claude_path and not agy_path:
+                print("  Antigravity is missing or out of quota; use:")
+                print("    --only codex --only claude")
+            elif claude_path and not codex_path and not agy_path:
+                print("  You can run a Claude-only lane with `--only claude`.")
+            else:
+                print("  Use repeated `--only` flags for whichever installed agents you want.")
         print()
-        print("  Last step: the first time you run `codex` and `agy`, sign in when")
-        print("  they ask. Then point your Claude at a plan and say 'run kibitz'.")
+        print("  Last step: the first time you run `codex`, `agy`, or `claude`,")
+        print("  sign in when they ask. Then point your driver at a plan and say")
+        print("  'run kibitz'.")
         rc = 0
     else:
         print("  RESULT: NOT READY YET")
@@ -168,8 +199,8 @@ def main() -> int:
             if not parse_ok:
                 print(f"    - scripts/kibitz.py did not parse: {parse_err}")
         if agents_found == 0:
-            print("    - Install at least one agent (kibitz needs Codex OR Antigravity;")
-            print("      both is best). See the hints above under [2] and [3].")
+            print("    - Install at least one agent (Codex, Antigravity, or Claude Code;")
+            print("      all three is the default panel). See the hints above.")
         rc = 1
     print("=" * 64)
     return rc

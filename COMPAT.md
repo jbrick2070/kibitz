@@ -4,9 +4,9 @@
 CLI flags, the model-selection policy, and the tool versions this was proven on.
 
 > **These flags move fast. If a flag breaks, run `codex --help` / `agy --help`
-> and update this file - do not patch around it in the script.** The skill's
-> design (file-handoff, read-only Codex, Claude-as-judge) is stable; only the
-> surface flags below are expected to drift.
+> / `claude --help` and update this file - do not patch around it in the
+> script.** The skill's design (file-handoff, read-only Codex, active-driver
+> judge) is stable; only the surface flags below are expected to drift.
 
 ## Proven on
 
@@ -14,6 +14,7 @@ CLI flags, the model-selection policy, and the tool versions this was proven on.
 |------|----------------|-------|
 | Codex CLI (`codex`) | running model `gpt-5.5` | `codex exec` non-interactive mode |
 | Antigravity (`agy`) | `1.0.13` | no `--headless`, no `--approve`, no `models` subcommand |
+| Claude Code (`claude`) | `2.1.72` | `claude -p` non-interactive mode |
 | GitHub CLI (`gh`) | `2.89` | optional; only if you script repo setup |
 
 These are the versions the invocations below were verified against. Newer
@@ -78,14 +79,50 @@ agy --model <model> --dangerously-skip-permissions -p "<prompt + write directive
   suffix (e.g. `gemini-3.1-pro-high`). Set `KIBITZ_AGY_MODEL=gemini-3.1-pro-high`
   for maximum reasoning.
 - **Diversity rule (do not casually change):** `agy` is multi-model and can run
-  Claude or gpt-oss too. Keep it on **Gemini**. The judge is Claude and Codex is
-  GPT, so `agy` on Gemini gives three distinct model families. Putting `agy` on a
-  Claude model duplicates the judge; putting it on gpt-oss duplicates Codex -
-  either collapses the panel's whole value.
+  Claude or gpt-oss too. Keep it on **Gemini**. Codex covers GPT-family review
+  and Claude Code covers the Claude-family lane when included, so `agy` on
+  Gemini gives three distinct model families. Putting `agy` on a Claude model
+  duplicates Claude; putting it on gpt-oss duplicates Codex - either collapses
+  the panel's whole value.
+
+## Claude Code (`claude`)
+
+Invocation (one review, default file-handoff lane):
+
+```
+claude -p \
+  --output-format text \
+  --no-session-persistence \
+  --dangerously-skip-permissions \
+  --tools Read,Glob,Grep,Write \
+  --add-dir <repo> \
+  [--model <model>] \
+  [--effort <low|medium|high|max>]
+```
+
+- The prompt is sent on **STDIN**.
+- Claude Code has no native `-o` / `--output-last-message` equivalent, so the
+  review is delivered by **file-handoff**: the prompt instructs Claude to WRITE
+  its complete review to a specific output file, then stop.
+- That write requires `--dangerously-skip-permissions`. The tool list is narrowed
+  to `Read,Glob,Grep,Write`; the prompt permits only the single review-file write.
+- Claude is in the default runner set. Use repeated `--only` flags to run a
+  smaller fallback panel, for example `--only codex --only claude` when `agy`
+  is out of quota. `--only agy` is accepted as an alias for
+  `--only antigravity`.
+
+### Claude model + effort policy
+
+- Default model alias: **`sonnet`** (override via `KIBITZ_CLAUDE_MODEL`; set to
+  `""` to use Claude Code's own default).
+- Default effort: **`high`** (override via `KIBITZ_CLAUDE_EFFORT`; supported
+  values on Claude Code 2.1.72 are `low`, `medium`, `high`, and `max`).
+- When `agy` is out of quota, the practical fallback is `--only claude` or
+  `--only codex --only claude`.
 
 ## If a flag breaks
 
-1. Run `codex --help` / `codex exec --help` or `agy --help`.
+1. Run `codex --help` / `codex exec --help`, `agy --help`, or `claude --help`.
 2. Find the current equivalent of the flag that broke.
 3. Update the invocation in `scripts/kibitz.py` AND the entry in this file in the
    same change. Note the version you verified it on in the table above.

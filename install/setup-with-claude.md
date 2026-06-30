@@ -3,7 +3,7 @@
 Paste this whole thing into Claude Cowork or Claude Code.
 
 ```
-I want to use the "kibitz" skill so ChatGPT and Gemini can fact-check my code. Set it up for me from
+I want to use the "kibitz" skill so ChatGPT, Gemini, and Claude Code can fact-check my code. Set it up for me from
 https://github.com/jbrick2070/kibitz -- do as much yourself as you can, and only stop when I need to
 sign in somewhere.
 
@@ -17,11 +17,13 @@ sign in somewhere.
    `irm https://antigravity.google/cli/install.ps1 | iex` (Mac/Linux:
    `curl -fsSL https://antigravity.google/cli/install.sh | bash`), then tell me to run `agy` once and sign
    in with my Google account.
-4. Run kibitz's `scripts/doctor.py` and show me the results -- every check must be green (it confirms both
-   the `codex` and `agy` CLIs resolve, even when they live in their hashed Windows install dirs).
-5. Prove it works: run kibitz's `scripts/kibitz.py` for a tiny one-round pass on a one-line sample plan and
-   show me both ChatGPT's and Gemini's reviews. Always run kibitz through `scripts/kibitz.py` -- never
-   improvise your own codex/agy calls.
+4. INSTALL OR CHECK CLAUDE CODE CLI (Claude's coding agent, the `claude` command): if it's missing, install
+   Claude Code, then tell me to run `claude` once and sign in with my Claude account.
+5. Run kibitz's `scripts/doctor.py` and show me the results -- every check must be green (it confirms
+   `codex`, `agy`, and `claude` resolve, even when they live in their Windows install dirs).
+6. Prove it works: run kibitz's `scripts/kibitz.py` for a tiny one-round pass on a one-line sample plan and
+   show me ChatGPT's, Gemini's, and Claude's reviews. Always run kibitz through `scripts/kibitz.py` -- never
+   improvise your own agent calls.
 
 When it's all green, give me a simple "you're ready" and remind me I just type `/kibitz` on any plan.
 ```
