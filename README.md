@@ -1,61 +1,69 @@
 # kibitz
 
-**Hey -- do you use Claude Cowork to vibe-code your ComfyUI workflows on Windows?** Then you can have
-**ChatGPT, Gemini, and Claude Code fact-check your work and give it a second look**, right inside
+**Hey -- do you use local coding agents to harden ComfyUI workflows on Windows?** Then you can have
+**multiple independent model families fact-check your work and give it a second look**, right inside
 your local agent flow, with this little skill.
 
 Here's the trick: they don't just read a snippet you paste in. Your active driver
-(Claude, Codex, or Antigravity) writes its own grounded anchor review, then Kibitz
-fans out to the other local systems -- Codex (ChatGPT), Antigravity (Gemini), and
-Claude Code as applicable. Each one reads your *whole* repo on your machine,
-critiques your plan, and then the active driver checks everything they say against
-your real code and throws out anything that isn't true. A real multi-system
-second opinion that can't bluff, because they actually read the code.
+(Claude, Codex, Antigravity, or another supported host) writes its own grounded
+anchor review, then Kibitz fans out to the other local reviewer lanes. The current
+lanes are Codex, Antigravity, and Claude Code, but the design goal is model-family
+diversity rather than loyalty to any one brand. Each lane reads your *whole* repo
+on your machine, critiques your plan, and then the active driver checks everything
+they say against your real code and throws out anything that isn't true. A real
+multi-system second opinion that can't bluff, because they actually read the code.
 
-No API keys -- just the ChatGPT, Gemini/Google, and Claude logins you probably already have.
+No API keys -- just the local agent logins you probably already have.
 
 > Built and tested on **Windows**. Mac/Linux will probably work (the commands are included) but aren't
 > tested yet -- if you try it, let me know how it goes.
 
 ## The easy way (recommended): paste one prompt, your AI does the rest
 
-This is how most people install it -- and it's the most reliable path. Open Claude Cowork (or Claude Code)
-and paste the prompt below. It tells your AI to do the whole setup -- **1) install the skill, 2) install the
-Codex CLI, 3) install the agy CLI, 4) install/check Claude Code CLI** -- and stop only when you need to sign
-in. Then... poof, you're set.
+This is how most people install it -- and it's the most reliable path. Open your
+preferred host assistant and paste the prompt below. It tells your AI to do the
+whole setup -- **1) install the skill, 2) install the OpenAI-family CLI lane, 3)
+install the Google-family CLI lane, 4) install/check the Anthropic-family CLI
+lane** -- and stop only when you need to sign in. Then... poof, you're set.
 (Same prompt also lives in [`install/setup-with-claude.md`](install/setup-with-claude.md).)
 
 ```
-I want to use the "kibitz" skill so ChatGPT, Gemini, and Claude Code can fact-check my code. Set it up for me from
+I want to use the "kibitz" skill so multiple local model families can fact-check my code. Set it up for me from
 https://github.com/jbrick2070/kibitz -- do as much yourself as you can, and only stop when I need to
 sign in somewhere.
 
 1. INSTALL THE SKILL: clone https://github.com/jbrick2070/kibitz to a folder I'll keep, and install the
-   skill from that clone into wherever my Claude looks for skills. KEEP the clone -- the kibitz script lives
+   skill from that clone into wherever my host looks for skills. KEEP the clone -- the kibitz script lives
    in its `scripts/` folder and that's what actually runs the agents (so typing `/kibitz` works).
-2. INSTALL THE CODEX CLI (ChatGPT's coding agent, the `codex` command): if it's missing, on Windows run
+2. INSTALL THE CODEX CLI (OpenAI-family coding agent lane, the `codex` command): if it's missing, on Windows run
    `powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"` (Mac/Linux:
-   `npm install -g @openai/codex`), then tell me to run `codex` once and sign in with my ChatGPT account.
-3. INSTALL THE ANTIGRAVITY CLI (Gemini's coding agent, the `agy` command): if it's missing, on Windows run
+   `npm install -g @openai/codex`), then tell me to run `codex` once and sign in with my OpenAI/ChatGPT account.
+3. INSTALL THE ANTIGRAVITY CLI (Google-family coding agent lane, the `agy` command): if it's missing, on Windows run
    `irm https://antigravity.google/cli/install.ps1 | iex` (Mac/Linux:
    `curl -fsSL https://antigravity.google/cli/install.sh | bash`), then tell me to run `agy` once and sign
    in with my Google account.
-4. INSTALL OR CHECK CLAUDE CODE CLI (Claude's coding agent, the `claude` command): if it's missing, install
+4. INSTALL OR CHECK CLAUDE CODE CLI (Anthropic-family coding agent lane, the `claude` command): if it's missing, install
    Claude Code, then tell me to run `claude` once and sign in with my Claude account.
 5. Run kibitz's `scripts/doctor.py` and show me the results -- every check must be green (it confirms
    `codex`, `agy`, and `claude` resolve, even when they live in their Windows install dirs).
 6. Prove it works: run kibitz's `scripts/kibitz.py` for a tiny one-round pass on a one-line sample plan,
-   using the correct `--driver` for this host. Show me the driver-aware reviewer set it picked. Always run
-   kibitz through `scripts/kibitz.py` -- never improvise your own agent calls.
+   using the correct `--driver` for this host. Show me the driver-aware reviewer set it picked. Explain
+   that Kibitz selects reviewer lanes by model family: Anthropic-family driver -> OpenAI + Google-family
+   lanes; OpenAI-family driver -> Google + Anthropic-family lanes; Google-family driver -> OpenAI +
+   Anthropic-family lanes; `--driver none` or `--all-agents` -> all configured lanes. Use `--dry-run`
+   first if you only need to verify selection without spending prompts. Always run kibitz through
+   `scripts/kibitz.py` -- never improvise your own agent calls.
 
 When it's all green, give me a simple "you're ready" and remind me I just type `/kibitz` on any plan.
 ```
 
-## Or install in one click (Claude Cowork)
+## Or install in one click (supported hosts)
 
-Prefer not to paste the prompt? Grab [`kibitz.skill`](kibitz.skill), open it in Claude Cowork, and click
-**Save skill** -- the whole skill (script, round prompts, ComfyUI profile) installs together in one click.
-You'll still need the three CLIs signed in (steps 2-4 of the prompt above).
+Prefer not to paste the prompt? Grab [`kibitz.skill`](kibitz.skill), open it in a
+host that supports `.skill` bundles (Claude Cowork does), and click **Save
+skill** -- the whole skill (script, round prompts, ComfyUI profile) installs
+together in one click. You'll still need the three CLIs signed in (steps 2-4 of
+the prompt above).
 
 ## Prefer to do it by hand? Manual install
 
@@ -68,9 +76,9 @@ Same order as the prompt: **skill first, then the three CLIs.**
 git clone https://github.com/jbrick2070/kibitz
 ```
 
-Then copy the `kibitz` folder into the folder where your Claude Code or Claude
-Cowork keeps its skills, so typing `/kibitz` works. If you are not sure where that
-is, just ask your Claude: "where do my skills live?" - then copy the folder there.
+Then copy the `kibitz` folder into the folder where your host keeps its skills, so
+typing `/kibitz` works. If you are not sure where that is, ask your host assistant:
+"where do my skills live?" - then copy the folder there.
 
 **2. Check Python.** You need Python 3.9 or later (kibitz uses only Python's
 built-in tools - there is nothing to `pip install`). Check with:
@@ -82,7 +90,7 @@ python --version
 If that prints `Python 3.9` or higher, you are set. If not, install Python from
 [python.org](https://www.python.org/downloads/).
 
-**3. Install OpenAI Codex (ChatGPT's coding agent) and sign in.**
+**3. Install OpenAI Codex (OpenAI-family coding agent lane) and sign in.**
 
 - Windows:
 
@@ -99,7 +107,7 @@ If that prints `Python 3.9` or higher, you are set. If not, install Python from
   **Important:** it must be the scoped name `@openai/codex`. The plain `codex`
   package on npm is an unrelated project from 2012 - do not install that one.
 
-- Sign in: run `codex` once and log in with a ChatGPT account (Plus, Pro, or
+- Sign in: run `codex` once and log in with an OpenAI/ChatGPT account (Plus, Pro, or
   Team) or an API key. If the browser sign-in does not work, run
   `codex login --device-auth` instead.
 
@@ -112,7 +120,7 @@ If that prints `Python 3.9` or higher, you are set. If not, install Python from
   (On Windows it installs under `%LOCALAPPDATA%\OpenAI\Codex`.) Docs:
   [developers.openai.com/codex/cli](https://developers.openai.com/codex/cli).
 
-**4. Install Google Antigravity (Gemini's coding agent) and sign in.**
+**4. Install Google Antigravity (Google-family coding agent lane) and sign in.**
 
 - Windows:
 
@@ -137,7 +145,7 @@ If that prints `Python 3.9` or higher, you are set. If not, install Python from
   (On Windows it installs under `%LOCALAPPDATA%\agy\bin`.) Docs:
   [antigravity.google/docs/cli-getting-started](https://antigravity.google/docs/cli-getting-started).
 
-**5. Install Claude Code (Claude's coding agent) and sign in.**
+**5. Install Claude Code (Anthropic-family coding agent lane) and sign in.**
 
 - Install Claude Code from Anthropic, then run:
 
@@ -184,9 +192,9 @@ installed, it will still say you can run, just with a one-agent panel. The docto
 cannot check whether you are signed in (that only happens the first time you run
 each agent yourself) - it will remind you of that.
 
-Then the tiny real test: in Claude, point at a short plan and say `/kibitz` (or
-just "run kibitz"). You will see the local agents go off, read the repo, and
-return reviews.
+Then the tiny real test: in your active host, point at a short plan and say
+`/kibitz` (or just "run kibitz"). You will see the local agents go off, read the
+repo, and return reviews.
 
 Kibitz is **multi-system aware**. It tries to detect the active driver, and you
 can make that explicit:
@@ -198,17 +206,17 @@ python scripts/kibitz.py --doc plan.md --round r1 --driver agy
 python scripts/kibitz.py --doc plan.md --round r1 --driver none
 ```
 
-- Claude driving -> Codex + Antigravity review.
-- Codex driving -> Antigravity + Claude Code review.
-- Antigravity driving -> Codex + Claude Code review.
-- `--driver none` or `--all-agents` -> Codex + Antigravity + Claude Code review.
+- Anthropic-family driver (`--driver claude`) -> OpenAI + Google-family reviewer lanes.
+- OpenAI-family driver (`--driver codex`) -> Google + Anthropic-family reviewer lanes.
+- Google-family driver (`--driver agy`) -> OpenAI + Anthropic-family reviewer lanes.
+- `--driver none` or `--all-agents` -> all configured reviewer lanes.
 - Repeated `--only` flags override driver-aware selection.
 - Add `--dry-run` to verify the selected driver/reviewer set without calling any
   agents.
 
 ## How to use it day to day
 
-Point Claude at a plan, spec, or design doc and say "run kibitz on this." Kibitz
+Point your active host at a plan, spec, or design doc and say "run kibitz on this." Kibitz
 then walks a fixed **4-round arc**, each round with a different lens:
 
 | Round | What it looks at |
@@ -229,7 +237,7 @@ have a full record of what was suggested, kept, and rejected.
 
 | You see... | Do this |
 |------------|---------|
-| `codex`, `agy`, or `claude` "not found" | Close and reopen your terminal so it picks up the new PATH. If it is still missing, it may be installed at `%LOCALAPPDATA%\OpenAI\Codex` (Codex), `%LOCALAPPDATA%\agy\bin` (Antigravity), or `%USERPROFILE%\.local\bin` (Claude Code). |
+| `codex`, `agy`, or `claude` "not found" | Close and reopen your terminal so it picks up the new PATH. If it is still missing, it may be installed at `%LOCALAPPDATA%\OpenAI\Codex` (OpenAI-family lane), `%LOCALAPPDATA%\agy\bin` (Google-family lane), or `%USERPROFILE%\.local\bin` (Anthropic-family lane). |
 | "not signed in" / it asks you to log in | Run the bare command once on its own - `codex`, `agy`, or `claude` - and complete the sign-in. After that, kibitz can use it. |
 | The wrong `codex` got installed | If you installed the plain `codex` npm package by mistake, uninstall it (`npm uninstall -g codex`) and install the scoped one: `npm install -g @openai/codex`. |
 | Only one agent is installed | Kibitz still runs with the one you have (a "degraded" one-agent panel). It only fails if all agents are missing. |
@@ -241,11 +249,11 @@ have a full record of what was suggested, kept, and rejected.
 Please read this before running kibitz on a repo you care about. It is gentle,
 but it matters.
 
-- **Codex reads only - it cannot change your files.** That is the safe lane.
-- **Antigravity runs without a sandbox.** To hand its review back, kibitz lets it
+- **The Codex lane reads only - it cannot change your files.** That is the safe lane.
+- **The Antigravity lane runs without a sandbox.** To hand its review back, kibitz lets it
   write that one review file, which means it is technically allowed to touch the
   disk. It is told, firmly, to review only and write nothing else.
-- **Claude Code also uses a write-approved file-handoff.** It is restricted to
+- **The Claude Code lane also uses a write-approved file-handoff.** It is restricted to
   Read/Glob/Grep/Write and told to write only its review file.
 - Because of that, if you are ever feeding in input you do not fully trust, run it
   in a **throwaway git worktree** (a disposable copy of your repo) rather than your
