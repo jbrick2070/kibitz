@@ -6,7 +6,8 @@ CLI flags, the model-selection policy, and the tool versions this was proven on.
 > **These flags move fast. If a flag breaks, run `codex --help` / `agy --help`
 > / `claude --help` and update this file - do not patch around it in the
 > script.** The skill's design (file-handoff, read-only Codex, active-driver
-> judge) is stable; only the surface flags below are expected to drift.
+> judge, driver-aware reviewer selection) is stable; only the surface flags
+> below are expected to drift.
 
 ## Proven on
 
@@ -106,10 +107,12 @@ claude -p \
   its complete review to a specific output file, then stop.
 - That write requires `--dangerously-skip-permissions`. The tool list is narrowed
   to `Read,Glob,Grep,Write`; the prompt permits only the single review-file write.
-- Claude is in the default runner set. Use repeated `--only` flags to run a
-  smaller fallback panel, for example `--only codex --only claude` when `agy`
-  is out of quota. `--only agy` is accepted as an alias for
-  `--only antigravity`.
+- Claude is in the runner set, but driver-aware defaults skip whichever system
+  is already acting as the active driver. Use `--driver codex|claude|agy|none`
+  to make that explicit, or `KIBITZ_DRIVER` for hosts that launch the script
+  indirectly. Use repeated `--only` flags to run a smaller fallback panel, for
+  example `--only codex --only claude` when `agy` is out of quota. `--only agy`
+  is accepted as an alias for `--only antigravity`.
 
 ### Claude model + effort policy
 
@@ -119,6 +122,32 @@ claude -p \
   values on Claude Code 2.1.72 are `low`, `medium`, `high`, and `max`).
 - When `agy` is out of quota, the practical fallback is `--only claude` or
   `--only codex --only claude`.
+
+## Driver-aware selection
+
+The script separates the **active driver** from the external reviewer agents.
+The driver writes the anchor review and does synthesis; the script fans out to
+the other systems by default.
+
+```
+python scripts/kibitz.py --doc plan.md --round r1 --driver auto
+python scripts/kibitz.py --doc plan.md --round r1 --driver codex
+python scripts/kibitz.py --doc plan.md --round r1 --driver claude
+python scripts/kibitz.py --doc plan.md --round r1 --driver agy
+python scripts/kibitz.py --doc plan.md --round r1 --driver none
+```
+
+- `--driver auto` is the default. It first honors `KIBITZ_DRIVER`; then it looks
+  for known host environment hints. Codex Desktop is detected via
+  `CODEX_SHELL` / `CODEX_THREAD_ID` / `CODEX_INTERNAL_ORIGINATOR_OVERRIDE`.
+- `--driver codex` runs Antigravity + Claude Code.
+- `--driver claude` runs Codex + Antigravity.
+- `--driver agy` / `--driver antigravity` runs Codex + Claude Code.
+- `--driver none` means standalone/full panel and runs all three agents.
+- `--all-agents` also runs all three, ignoring the detected driver.
+- Repeated `--only` flags override driver-aware selection entirely.
+- `--dry-run` prints the selected driver/reviewer set and exits before any agent
+  call.
 
 ## If a flag breaks
 

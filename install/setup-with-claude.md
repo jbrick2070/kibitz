@@ -21,9 +21,12 @@ sign in somewhere.
    Claude Code, then tell me to run `claude` once and sign in with my Claude account.
 5. Run kibitz's `scripts/doctor.py` and show me the results -- every check must be green (it confirms
    `codex`, `agy`, and `claude` resolve, even when they live in their Windows install dirs).
-6. Prove it works: run kibitz's `scripts/kibitz.py` for a tiny one-round pass on a one-line sample plan and
-   show me ChatGPT's, Gemini's, and Claude's reviews. Always run kibitz through `scripts/kibitz.py` -- never
-   improvise your own agent calls.
+6. Prove it works: run kibitz's `scripts/kibitz.py` for a tiny one-round pass on a one-line sample plan,
+   using the correct `--driver` for this host. Explain that Kibitz is multi-system aware:
+   Claude driving -> Codex + Antigravity review; Codex driving -> Antigravity + Claude review;
+   Antigravity driving -> Codex + Claude review; `--driver none` or `--all-agents` -> all three
+   external reviewers. Use `--dry-run` first if you only need to verify selection without spending
+   prompts. Always run kibitz through `scripts/kibitz.py` -- never improvise your own agent calls.
 
 When it's all green, give me a simple "you're ready" and remind me I just type `/kibitz` on any plan.
 ```

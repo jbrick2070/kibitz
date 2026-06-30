@@ -2,15 +2,16 @@
 name: kibitz
 description: >-
   Kibitz gets you a second opinion on a plan, sprint plan, spec, or architecture
-  doc from three local file-reading CLI agents: Codex (`codex exec`),
-  Antigravity (`agy -p`), and Claude Code (`claude -p`). Each agent crawls your
-  REAL repo on its own and returns an independent review; the active driver
-  writes its own code-grounded anchor review, grounds the agents' claims against
-  the actual code, discards hallucinations, and folds only the survivors into
-  one improved plan across a fixed 4-round arc (r1 arc -> r2 coding -> r3
-  wiring -> r4 convergence). Fully hands-off, designed for Claude Cowork,
-  Codex, and Antigravity on Windows; ships with an opt-in ComfyUI custom-node
-  profile.
+  doc from local file-reading CLI agents: Codex (`codex exec`), Antigravity
+  (`agy -p`), and Claude Code (`claude -p`). Kibitz is multi-system aware: the
+  active driver (Claude, Codex, or Antigravity) writes the anchor review and is
+  excluded from the default external reviewer set, while the remaining local
+  agents crawl your REAL repo and return independent reviews. The driver grounds
+  the agents' claims against the actual code, discards hallucinations, and folds
+  only the survivors into one improved plan across a fixed 4-round arc (r1 arc
+  -> r2 coding -> r3 wiring -> r4 convergence). Fully hands-off, designed for
+  Claude Cowork, Codex, and Antigravity on Windows; ships with an opt-in ComfyUI
+  custom-node profile.
   Use when the user wants a second opinion / to pressure-test / harden /
   "round-robin" / "make bulletproof" a doc with their LOCAL agents, or says
   "kibitz", "/kibitz", "kibitz this", "get a second opinion", "run the local
@@ -26,10 +27,16 @@ agents for independent critique, then (3) verifying every claim against the
 real code and folding only what survives into an improved plan. Fixed 4-round
 arc; run all four.
 
-The default panel here is **Codex (`codex exec`)**, **Antigravity (`agy -p`)**,
-and **Claude Code (`claude -p`)** running on your machine, each reading the real
-repo itself. Use repeated `--only` flags for fallbacks, such as
-`--only codex --only claude` when Antigravity is out of quota.
+The default panel is **driver-aware**:
+
+- Claude driving -> Codex + Antigravity review.
+- Codex driving -> Antigravity + Claude Code review.
+- Antigravity driving -> Codex + Claude Code review.
+- No driver / standalone -> Codex + Antigravity + Claude Code review.
+
+Use `--driver claude|codex|agy|none` when the host is not auto-detected. Use
+repeated `--only` flags for fallbacks, such as `--only codex --only claude` when
+Antigravity is out of quota.
 
 > **Exact CLI flags, model-selection policy, and the versions this was proven
 > on live in [`COMPAT.md`](COMPAT.md).** They move fast; keep them out of your
@@ -44,11 +51,11 @@ repo itself. Use repeated `--only` flags for fallbacks, such as
   the driver is Claude; in Codex the driver is Codex. This *anchor review* is
   grounded from the start and stops the panel from hijacking synthesis with
   plausible-sounding hallucinations.
-- **The panel generates independent critiques.** By default it is Codex +
-  Antigravity + Claude Code. Each agent opens your repo in its own working
-  directory and grounds its own review; neither sees the other's output.
-  Different agent harnesses catch different things - that diversity is the
-  value.
+- **The panel generates independent critiques.** By default it is the two local
+  agents that are not already the active driver; standalone runs use all three.
+  Each agent opens your repo in its own working directory and grounds its own
+  review; neither sees the other's output. Different agent harnesses catch
+  different things - that diversity is the value.
 - **The active driver is the sole judge and synthesizer.** Local agents can
   still be confidently wrong about your code. The driver verifies each agent
   claim against the actual files, throws out misreads and hallucinations, and
@@ -86,8 +93,9 @@ Each round has a different focus. Run all four; do not exit early.
 | r4 | Convergence / residual defects | `references/review-prompt-r4.md` |
 
 After r4, deliver the final hardened plan and report the agent calls made
-(12 total across the default arc: three agents x four rounds; 8 total for a
-two-agent fallback such as Codex + Claude).
+(8 external calls across the normal driver-aware arc: two reviewer agents x four
+rounds; 12 calls if `--driver none` or `--all-agents` runs all three external
+agents).
 
 **Domain profiles (optional).** The four round prompts are deliberately
 general. When the target is a specialized codebase, append the matching profile
@@ -159,14 +167,21 @@ python scripts/kibitz.py \
   --doc path/to/plan.md \
   --round r1 \
   --topic ending-mode \
-  --repo /path/to/your/repo
+  --repo /path/to/your/repo \
+  --driver auto
 ```
 
 - `--repo` defaults to the current directory, so if you run from the repo root
   you can omit it.
 - `--round {r1,r2,r3,r4}` picks the round prompt. Run all four across the arc.
+- `--driver {auto,none,codex,claude,antigravity,agy}` selects the active driver.
+  `auto` honors `KIBITZ_DRIVER` and known host environment hints. `none` means
+  standalone/full external panel.
+- `--all-agents` runs Codex + Antigravity + Claude Code regardless of driver.
 - `--only codex`, `--only antigravity`/`--only agy`, or `--only claude` runs
-  selected agents (repeatable). Default is Codex + Antigravity + Claude.
+  selected agents (repeatable) and overrides the driver-aware default.
+- `--dry-run` prints the detected/selected driver and reviewer agents without
+  calling any agents; use it to confirm host detection without spending prompts.
 - If `agy` is out of quota, use `--only claude` or repeat
   `--only codex --only claude`.
 - `--timeout <seconds>` is optional; default is no ceiling (agents batch and can
@@ -186,10 +201,10 @@ there after grounding and synthesis.
   *contains a review* rather than an error message. If it is empty (or is an
   "I can't access the repo" note) with exit 0, the agent ignored the write
   directive: check `<agent>.log` and re-run once.
-- **`agy` has a per-prompt quota.** A default full arc is 8 agent calls (two
-  agents x four rounds), which is fine, but the per-prompt ceiling can bite on
-  high-volume loops. When it does, keep the round moving with `--only claude`
-  or `--only codex --only claude`.
+- **`agy` has a per-prompt quota.** A normal driver-aware full arc is 8 external
+  agent calls (two reviewer agents x four rounds), which is fine, but the
+  per-prompt ceiling can bite on high-volume loops. When it does, keep the
+  round moving with `--only claude` or `--only codex --only claude`.
 - **4 rounds is the arc.** Do not add passes beyond r4 unless the user asks.
 
 ## Conventions

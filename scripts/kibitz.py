@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """kibitz.py - local-agent fan-out for the kibitz skill (FILE-HANDOFF contract).
 
-Fans ONE hardening pass out to three local file-reading CLI agents - Codex
-(`codex exec`), Antigravity (`agy`), and Claude Code (`claude -p`) - each of
-which reads your REAL repo on its own and returns an independent review. No API
-key, no copy-paste. Python standard library only: no pip install, no third-party
+Fans ONE hardening pass out to local file-reading CLI agents - Codex
+(`codex exec`), Antigravity (`agy`), and Claude Code (`claude -p`). Each reads
+your REAL repo on its own and returns an independent review. No API key, no
+copy-paste. Python standard library only: no pip install, no third-party
 dependencies.
 
-The default panel is all three agents. Use repeated `--only` flags to run a
-smaller panel, e.g. `--only codex --only claude` when Antigravity is out of
-quota. `--only agy` is accepted as an alias for `--only antigravity`.
+The default panel is driver-aware: if Claude is driving, run Codex + Antigravity;
+if Codex is driving, run Antigravity + Claude; if Antigravity is driving, run
+Codex + Claude. If no driver is detected, run all three agents. Use `--driver`
+or `KIBITZ_DRIVER` to make the driver explicit, and repeated `--only` flags for
+manual fallbacks. `--only agy` is accepted as an alias for `--only antigravity`.
 
 This script does the fan-out ONLY. The driver (Claude, Codex, or another host)
 then writes its own code-grounded anchor review, verifies these agent reviews
@@ -32,9 +34,12 @@ to a known file:
 
 Usage:
   python kibitz.py --doc plan.md --round r2 --repo /path/to/repo
+  python kibitz.py --doc plan.md --round r2 --repo /path/to/repo --driver codex
+  python kibitz.py --doc plan.md --round r2 --repo /path/to/repo --driver none
   python kibitz.py --doc plan.md --round r3 --only codex --only claude
   python kibitz.py --doc plan.md --round r3 --only agy
   python kibitz.py --doc plan.md --round r3 --only claude
+  python kibitz.py --doc plan.md --round r3 --driver codex --dry-run
   python kibitz.py "harden the ending-mode plan" --round r1
   python kibitz.py --doc plan.md --round r1 --timeout 600
 
@@ -43,6 +48,7 @@ Configuration is via CLI args and environment variables only -- no hardcoded pat
   KIBITZ_AGY_MODEL        Antigravity model slug (default "gemini-3.5-pro"; "" = agy default).
   KIBITZ_CLAUDE_MODEL     Claude model alias/slug (default "sonnet"; "" = Claude default).
   KIBITZ_CLAUDE_EFFORT    Claude effort level (default "high"; low/medium/high/max).
+  KIBITZ_DRIVER           Active driver: auto, none, codex, claude, antigravity/agy.
 
 SAFETY: Codex runs read-only (hard guarantee). Antigravity runs UNSANDBOXED
 (--dangerously-skip-permissions) because the file-handoff needs write approval; it is
@@ -311,22 +317,76 @@ AGENT_ALIASES = {
     "agy": "antigravity",
     "claude": "claude",
 }
+DRIVER_ALIASES = {
+    **AGENT_ALIASES,
+    "none": None,
+    "all": None,
+    "external": None,
+    "standalone": None,
+    "chatgpt": "codex",
+    "gemini": "antigravity",
+    "cowork": "claude",
+    "claude-code": "claude",
+}
 DEFAULT_RUNNERS = ["codex", "antigravity", "claude"]
+
+
+def normalize_driver(raw):
+    if raw is None:
+        return "auto"
+    key = raw.strip().lower()
+    if key == "":
+        return "auto"
+    if key == "auto":
+        return "auto"
+    if key in DRIVER_ALIASES:
+        return DRIVER_ALIASES[key]
+    raise ValueError(raw)
+
+
+def detect_driver():
+    """Best-effort host detection. Return (driver, source), where driver is one
+    of codex/antigravity/claude or None when standalone/full-panel."""
+    env_driver = os.environ.get("KIBITZ_DRIVER")
+    if env_driver:
+        try:
+            driver = normalize_driver(env_driver)
+        except ValueError:
+            sys.exit(f"ERROR: unknown KIBITZ_DRIVER={env_driver!r}; "
+                     f"use auto, none, codex, claude, antigravity, or agy")
+        if driver != "auto":
+            return driver, "KIBITZ_DRIVER"
+
+    env = os.environ
+    if env.get("CODEX_SHELL") or env.get("CODEX_THREAD_ID") or env.get("CODEX_INTERNAL_ORIGINATOR_OVERRIDE"):
+        return "codex", "Codex environment"
+    if env.get("AGY") or env.get("ANTIGRAVITY") or env.get("ANTIGRAVITY_CLI"):
+        return "antigravity", "Antigravity environment"
+    if env.get("CLAUDECODE") or env.get("CLAUDE_CODE") or env.get("CLAUDE_DESKTOP"):
+        return "claude", "Claude environment"
+    return None, "standalone"
 
 
 def main() -> None:
     global PER_AGENT_TIMEOUT
     ap = argparse.ArgumentParser(
-        description="kibitz local-agent fan-out (Codex + Antigravity + Claude)")
+        description="kibitz local-agent fan-out (driver-aware Codex/Antigravity/Claude)")
     ap.add_argument("problem", nargs="?", help="the plan / problem text to harden")
     ap.add_argument("--doc", help="path to an existing plan .md (instead of inline text)")
     ap.add_argument("--round", choices=["r1", "r2", "r3", "r4"], default="r1")
     ap.add_argument("--topic", default="kibitz", help="short slug for the run folder")
     ap.add_argument("--repo", type=Path, default=Path.cwd())
     ap.add_argument("--only", action="append", metavar="{codex,antigravity,agy,claude}",
-                    help="run only this agent (repeatable). Default: codex + antigravity + claude.")
+                    help="run only this agent (repeatable). Overrides driver-aware defaults.")
+    ap.add_argument("--driver", default="auto",
+                    metavar="{auto,none,codex,claude,antigravity,agy}",
+                    help="active driver to exclude from default reviewers. Default: auto.")
+    ap.add_argument("--all-agents", action="store_true",
+                    help="run codex + antigravity + claude, ignoring detected driver.")
     ap.add_argument("--with-claude", action="store_true",
-                    help="deprecated no-op kept for compatibility; Claude is in the default panel.")
+                    help="compatibility flag: include Claude even if the driver-aware default excludes it.")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="print selected driver/agents and exit without calling agents.")
     ap.add_argument("--timeout", type=float, default=None,
                     help="per-agent timeout in seconds (default: none -- agents batch).")
     args = ap.parse_args()
@@ -344,6 +404,14 @@ def main() -> None:
     else:
         ap.error("provide a problem string, or use --doc <path>")
 
+    detected_driver, driver_source = detect_driver()
+    try:
+        explicit_driver = normalize_driver(args.driver)
+    except ValueError:
+        ap.error(f"unknown driver: {args.driver} "
+                 f"(choose auto, none, codex, claude, antigravity/agy)")
+    driver = detected_driver if explicit_driver == "auto" else explicit_driver
+
     if args.only:
         selected = []
         for raw_name in args.only:
@@ -353,10 +421,14 @@ def main() -> None:
                          f"(choose codex, antigravity/agy, or claude)")
             if name not in selected:
                 selected.append(name)
-    else:
+    elif args.all_agents:
         selected = list(DEFAULT_RUNNERS)
+    else:
+        selected = [name for name in DEFAULT_RUNNERS if name != driver]
     if args.with_claude and "claude" not in selected:
         selected.append("claude")
+    if not selected:
+        selected = list(DEFAULT_RUNNERS)
     date = datetime.date.today().isoformat()
     run_dir = repo / "kibitz-runs" / f"{date}-{args.topic}" / args.round
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -369,7 +441,11 @@ def main() -> None:
     print(f"Repo:       {repo}")
     print(f"Round:      {args.round}")
     print(f"Run folder: {run_dir}")
+    print(f"Driver:     {driver or 'none'} ({driver_source if explicit_driver == 'auto' else 'explicit'})")
     print(f"Agents:     {', '.join(selected)}")
+    if args.dry_run:
+        print("Dry run:    no agents called")
+        return
     print("Fanning out (each agent reads the repo + writes its review to a FILE):")
 
     results = {}

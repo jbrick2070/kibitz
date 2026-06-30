@@ -170,7 +170,7 @@ def main() -> int:
         print()
         if agents_found == 3:
             print("  Codex, Antigravity, and Claude Code are installed.")
-            print("  The default three-agent panel is ready.")
+            print("  Driver-aware defaults are ready.")
         else:
             print(f"  Installed agents: {', '.join(installed_agents)}")
             print(f"  Missing agents: {', '.join(missing_agents)}")
@@ -185,6 +185,8 @@ def main() -> int:
         print("  Last step: the first time you run `codex`, `agy`, or `claude`,")
         print("  sign in when they ask. Then point your driver at a plan and say")
         print("  'run kibitz'.")
+        print("  If host auto-detection misses, pass --driver codex, --driver claude,")
+        print("  --driver agy, or set KIBITZ_DRIVER.")
         rc = 0
     else:
         print("  RESULT: NOT READY YET")
@@ -200,7 +202,7 @@ def main() -> int:
                 print(f"    - scripts/kibitz.py did not parse: {parse_err}")
         if agents_found == 0:
             print("    - Install at least one agent (Codex, Antigravity, or Claude Code;")
-            print("      all three is the default panel). See the hints above.")
+            print("      all three gives the fullest panel). See the hints above.")
         rc = 1
     print("=" * 64)
     return rc

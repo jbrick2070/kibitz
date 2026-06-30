@@ -4,10 +4,13 @@
 **ChatGPT, Gemini, and Claude Code fact-check your work and give it a second look**, right inside
 your local agent flow, with this little skill.
 
-Here's the trick: they don't just read a snippet you paste in -- Codex (ChatGPT), Antigravity (Gemini),
-and Claude Code each read your *whole* repo on your own machine, critique your plan, and then the active
-driver checks everything they say against your real code and throws out anything that isn't true. A real
-three-way second opinion that can't bluff, because they actually read the code.
+Here's the trick: they don't just read a snippet you paste in. Your active driver
+(Claude, Codex, or Antigravity) writes its own grounded anchor review, then Kibitz
+fans out to the other local systems -- Codex (ChatGPT), Antigravity (Gemini), and
+Claude Code as applicable. Each one reads your *whole* repo on your machine,
+critiques your plan, and then the active driver checks everything they say against
+your real code and throws out anything that isn't true. A real multi-system
+second opinion that can't bluff, because they actually read the code.
 
 No API keys -- just the ChatGPT, Gemini/Google, and Claude logins you probably already have.
 
@@ -41,9 +44,9 @@ sign in somewhere.
    Claude Code, then tell me to run `claude` once and sign in with my Claude account.
 5. Run kibitz's `scripts/doctor.py` and show me the results -- every check must be green (it confirms
    `codex`, `agy`, and `claude` resolve, even when they live in their Windows install dirs).
-6. Prove it works: run kibitz's `scripts/kibitz.py` for a tiny one-round pass on a one-line sample plan and
-   show me ChatGPT's, Gemini's, and Claude's reviews. Always run kibitz through `scripts/kibitz.py` -- never
-   improvise your own agent calls.
+6. Prove it works: run kibitz's `scripts/kibitz.py` for a tiny one-round pass on a one-line sample plan,
+   using the correct `--driver` for this host. Show me the driver-aware reviewer set it picked. Always run
+   kibitz through `scripts/kibitz.py` -- never improvise your own agent calls.
 
 When it's all green, give me a simple "you're ready" and remind me I just type `/kibitz` on any plan.
 ```
@@ -185,6 +188,24 @@ Then the tiny real test: in Claude, point at a short plan and say `/kibitz` (or
 just "run kibitz"). You will see the local agents go off, read the repo, and
 return reviews.
 
+Kibitz is **multi-system aware**. It tries to detect the active driver, and you
+can make that explicit:
+
+```
+python scripts/kibitz.py --doc plan.md --round r1 --driver claude
+python scripts/kibitz.py --doc plan.md --round r1 --driver codex
+python scripts/kibitz.py --doc plan.md --round r1 --driver agy
+python scripts/kibitz.py --doc plan.md --round r1 --driver none
+```
+
+- Claude driving -> Codex + Antigravity review.
+- Codex driving -> Antigravity + Claude Code review.
+- Antigravity driving -> Codex + Claude Code review.
+- `--driver none` or `--all-agents` -> Codex + Antigravity + Claude Code review.
+- Repeated `--only` flags override driver-aware selection.
+- Add `--dry-run` to verify the selected driver/reviewer set without calling any
+  agents.
+
 ## How to use it day to day
 
 Point Claude at a plan, spec, or design doc and say "run kibitz on this." Kibitz
@@ -197,12 +218,12 @@ then walks a fixed **4-round arc**, each round with a different lens:
 | r3 | The wiring - do the pieces connect and sequence correctly? |
 | r4 | Final pass - anything still broken? |
 
-In every round, the three agents read your real code and write their own reviews,
-and then **the active driver is the judge**: it grounds every claim each agent
-makes against your actual code, throws out the ones that are wrong, and folds the
-rest into a better version of the plan. The output lands in a `kibitz-runs\`
-folder inside your repo, so you have a full record of what was suggested, kept,
-and rejected.
+In every round, the driver writes the anchor review, the external reviewer agents
+read your real code and write their own reviews, and then **the active driver is
+the judge**: it grounds every claim each agent makes against your actual code,
+throws out the ones that are wrong, and folds the rest into a better version of
+the plan. The output lands in a `kibitz-runs\` folder inside your repo, so you
+have a full record of what was suggested, kept, and rejected.
 
 ## Troubleshooting
 
@@ -213,6 +234,7 @@ and rejected.
 | The wrong `codex` got installed | If you installed the plain `codex` npm package by mistake, uninstall it (`npm uninstall -g codex`) and install the scoped one: `npm install -g @openai/codex`. |
 | Only one agent is installed | Kibitz still runs with the one you have (a "degraded" one-agent panel). It only fails if all agents are missing. |
 | Antigravity is out of quota | Use `--only codex --only claude` for that round. |
+| Kibitz picked the wrong driver | Pass `--driver claude`, `--driver codex`, `--driver agy`, or set `KIBITZ_DRIVER` before launching it. |
 
 ## A note on safety
 

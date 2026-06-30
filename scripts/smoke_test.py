@@ -15,6 +15,7 @@ import ast
 import shutil
 import sys
 from pathlib import Path
+from typing import Dict, Optional
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -41,7 +42,7 @@ def check_tree() -> list[str]:
     return missing
 
 
-def check_parse() -> str | None:
+def check_parse() -> Optional[str]:
     """AST-parse scripts/kibitz.py. Return an error string on failure, else None."""
     target = ROOT / "scripts" / "kibitz.py"
     if not target.is_file():
@@ -53,7 +54,7 @@ def check_parse() -> str | None:
     return None
 
 
-def check_agents() -> dict[str, bool]:
+def check_agents() -> Dict[str, bool]:
     """Soft check: is each agent CLI on PATH? Reported, never fatal."""
     return {name: shutil.which(name) is not None for name in ("codex", "agy", "claude")}
 
