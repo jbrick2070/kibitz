@@ -292,6 +292,7 @@ have a full record of what was suggested, kept, and rejected.
 | The wrong `codex` got installed | If you installed the plain `codex` npm package by mistake, uninstall it (`npm uninstall -g codex`) and install the scoped one: `npm install -g @openai/codex`. |
 | Only one agent is installed | Kibitz still runs with the one you have (a "degraded" one-agent panel). It only fails if all agents are missing. |
 | Antigravity is out of quota | Use `--only codex --only claude` for that round. |
+| Antigravity says only `timeout waiting for response` | Check `<run>\antigravity.log`. If recent `agy` CLI logs contain `RESOURCE_EXHAUSTED`, `code 429`, `check quota`, or `Individual quota reached`, Kibitz annotates the failed review file with a quota/backend exhaustion diagnostic. Without those markers, treat it as an `agy` timeout/print-mode failure, not proven credits. |
 | Antigravity exits rc=0 but produces no review | Kibitz treats that as a failed leg, not success. This is the known captured-stdout drop in `agy -p` (#76/#408); the remaining reviewer lanes and the driver anchor can continue. |
 | Kibitz picked the wrong driver | Pass `--driver claude`, `--driver codex`, `--driver agy`, or set `KIBITZ_DRIVER` before launching it. |
 

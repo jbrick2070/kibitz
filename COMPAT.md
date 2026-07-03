@@ -75,6 +75,13 @@ agy --model <model> --dangerously-skip-permissions --print-timeout 5m \
   with rc=0 (#76/#408). Kibitz closes stdin with `stdin=subprocess.DEVNULL`,
   reads the output file first, and treats rc=0 with no file/stdout text as a
   failed leg rather than an empty review.
+- On quota/credit exhaustion, `agy` may only hand Kibitz a generic timeout or
+  empty file. When the Antigravity leg fails, Kibitz also scans recent
+  `%USERPROFILE%\.gemini\antigravity-cli\log\*.log` / `cli.log` entries for
+  quota markers such as `RESOURCE_EXHAUSTED`, `code 429`, `check quota`, or
+  `Individual quota reached`. Only those markers are reported as
+  quota/backend exhaustion; Kibitz must not guess "credits" from a plain
+  timeout.
 - That write requires `--dangerously-skip-permissions` (agy is otherwise
   interactive about file writes). This makes `agy` **UNSANDBOXED**: it is gated
   only by the strict review-only prompt directive. See SAFETY in `README.md` -

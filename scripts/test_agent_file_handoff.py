@@ -157,6 +157,24 @@ def assert_contains(path: Path, expected: str, context: subprocess.CompletedProc
         raise AssertionError(f"{path} did not contain {expected!r}; got {actual!r}{detail}")
 
 
+def write_agy_quota_log(home: Path) -> None:
+    log_dir = home / ".gemini" / "antigravity-cli" / "log"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    (log_dir / "cli-test.log").write_text(
+        textwrap.dedent("""\
+            I0702 20:52:17 server.go:2578] GetG1Credits: starting fetch
+            E0702 20:52:17 http_helpers.go:269] Failed to make code assist backend request (loadCodeAssist): {
+              "error": {
+                "code": 429,
+                "message": "Resource has been exhausted (e.g. check quota).",
+                "status": "RESOURCE_EXHAUSTED"
+              }
+            }
+        """),
+        encoding="utf-8",
+    )
+
+
 def main() -> int:
     source = KIBITZ.read_text(encoding="utf-8")
     if "stdin=subprocess.DEVNULL" not in source:
@@ -166,8 +184,10 @@ def main() -> int:
         tmp = Path(tmp_raw)
         repo = tmp / "repo"
         fake_bin = tmp / "bin"
+        fake_home = tmp / "home"
         repo.mkdir()
         fake_bin.mkdir()
+        fake_home.mkdir()
         plan = tmp / "plan.md"
         plan.write_text("Review this stub plan.\n", encoding="utf-8")
         write_stub_launchers(fake_bin)
@@ -177,6 +197,8 @@ def main() -> int:
         env["KIBITZ_AGY_MODEL"] = ""
         env["KIBITZ_CLAUDE_MODEL"] = ""
         env["KIBITZ_CLAUDE_EFFORT"] = ""
+        env["HOME"] = str(fake_home)
+        env["USERPROFILE"] = str(fake_home)
 
         ok = run_kibitz(repo, plan, env, "stub-pass", "codex", "claude", "agy")
         if ok.returncode != 0:
@@ -194,6 +216,7 @@ def main() -> int:
 
         empty_env = env.copy()
         empty_env["KIBITZ_STUB_AGY_MODE"] = "empty"
+        write_agy_quota_log(fake_home)
         degraded = run_kibitz(repo, plan, empty_env, "stub-empty", "codex", "agy")
         if degraded.returncode != 0:
             raise AssertionError(textwrap.dedent(f"""\
@@ -207,8 +230,10 @@ def main() -> int:
             raise AssertionError("missing agy #76 failure note")
         second = run_dir(repo, "stub-empty")
         assert_contains(second / "codex.md", "CODEX STDOUT REVIEW", degraded)
+        assert_contains(second / "antigravity.md", "RESOURCE_EXHAUSTED", degraded)
+        assert_contains(second / "antigravity.log", "quota/backend exhaustion", degraded)
         empty_review = second / "antigravity.md"
-        if empty_review.exists() and empty_review.read_text(encoding="utf-8").strip():
+        if "AGY FILE REVIEW" in empty_review.read_text(encoding="utf-8"):
             raise AssertionError("empty agy leg produced a fake review")
 
     print("agent file-handoff regression: PASS")

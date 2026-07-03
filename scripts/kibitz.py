@@ -66,6 +66,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
@@ -115,6 +116,20 @@ AGY_MODEL = os.environ.get("KIBITZ_AGY_MODEL", "gemini-3.5-pro")
 AGY_PRINT_TIMEOUT = os.environ.get("KIBITZ_AGY_PRINT_TIMEOUT", "5m")
 CLAUDE_MODEL = os.environ.get("KIBITZ_CLAUDE_MODEL", "sonnet")
 CLAUDE_EFFORT = os.environ.get("KIBITZ_CLAUDE_EFFORT", "high")
+
+AGY_QUOTA_MARKERS = (
+    "resource_exhausted",
+    "code 429",
+    '"code": 429',
+    "check quota",
+    "quota reached",
+    "quota limit",
+    "quota exceeded",
+    "individual quota",
+    "contact your administrator to enable overages",
+    "enable overages",
+)
+AGY_LOG_LOOKBACK_SECONDS = float(os.environ.get("KIBITZ_AGY_LOG_LOOKBACK_SECONDS", "60"))
 
 
 def pick_codex_model(exe: str, repo: Path, run_dir: Path):
@@ -188,6 +203,84 @@ def write_process_log(log_file: Path, stdout_text: str, stderr_text: str, extra:
 def append_process_log(log_file: Path, text: str) -> None:
     with log_file.open("a", encoding="utf-8") as log:
         log.write(text.rstrip() + "\n")
+
+
+def recent_agy_log_files(started_at: float) -> list[Path]:
+    """Return recent Antigravity CLI logs that could belong to this agy run."""
+    base = Path.home() / ".gemini" / "antigravity-cli"
+    candidates = []
+    direct = base / "cli.log"
+    if direct.is_file():
+        candidates.append(direct)
+    log_dir = base / "log"
+    if log_dir.is_dir():
+        candidates.extend(log_dir.glob("*.log"))
+
+    cutoff = started_at - AGY_LOG_LOOKBACK_SECONDS
+    recent = []
+    for path in candidates:
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue
+        if mtime >= cutoff:
+            recent.append((mtime, path))
+    recent.sort(reverse=True)
+    return [path for _mtime, path in recent[:8]]
+
+
+def tail_text(path: Path, max_bytes: int = 200_000) -> str:
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - max_bytes))
+            data = handle.read()
+    except OSError:
+        return ""
+    return data.decode("utf-8", errors="replace")
+
+
+def agy_quota_diagnostic(started_at: float, stdout_text: str = "", stderr_text: str = "") -> str:
+    """Detect quota/backend exhaustion in agy's own output or recent CLI logs."""
+    combined = "\n".join(part for part in (stdout_text, stderr_text) if part)
+    lowered = combined.lower()
+    if any(marker in lowered for marker in AGY_QUOTA_MARKERS):
+        return "Antigravity quota/backend exhaustion detected in agy output."
+
+    for path in recent_agy_log_files(started_at):
+        text = tail_text(path)
+        lowered = text.lower()
+        if not any(marker in lowered for marker in AGY_QUOTA_MARKERS):
+            continue
+        lines = [
+            line.strip()
+            for line in text.splitlines()
+            if any(marker in line.lower() for marker in AGY_QUOTA_MARKERS)
+        ]
+        excerpt = "\n".join(lines[-6:])
+        if excerpt:
+            return (
+                "Antigravity quota/backend exhaustion detected in recent CLI log "
+                f"{path}:\n{excerpt}"
+            )
+        return f"Antigravity quota/backend exhaustion detected in recent CLI log {path}."
+    return ""
+
+
+def record_failure_diagnostic(name: str, out_file: Path, log_file: Path, diagnostic: str) -> None:
+    if not diagnostic:
+        return
+    print(f"  [DIAG] {name}: {diagnostic.splitlines()[0]}")
+    append_process_log(log_file, f"{name}: {diagnostic}")
+    existing = ""
+    if out_file.exists():
+        existing = out_file.read_text(encoding="utf-8", errors="replace").rstrip()
+    note = "[KIBITZ DIAGNOSTIC]\n" + diagnostic.strip()
+    if existing:
+        out_file.write_text(existing + "\n\n" + note + "\n", encoding="utf-8")
+    else:
+        out_file.write_text(note + "\n", encoding="utf-8")
 
 
 def collect_review(
@@ -338,16 +431,23 @@ def run_agy(prompt: str, repo: Path, out_file: Path, log_file: Path) -> bool:
     (out_file.parent / "agy_model_selected.txt").write_text(
         AGY_MODEL or "(agy default)", encoding="utf-8")
     print(f"  -> antigravity: model={AGY_MODEL or 'default'} file-handoff -> {out_file.name}")
+    started_at = time.time()
     try:
         proc = subprocess.run(cmd, stdin=subprocess.DEVNULL, text=True, cwd=str(repo),
                               capture_output=True, encoding="utf-8", errors="replace",
                               timeout=PER_AGENT_TIMEOUT)
         write_process_log(log_file, proc.stdout or "", proc.stderr or "")
     except subprocess.TimeoutExpired:
+        diagnostic = agy_quota_diagnostic(started_at)
+        record_failure_diagnostic("antigravity", out_file, log_file, diagnostic)
         print(f"  [FAILED] antigravity (timeout after {PER_AGENT_TIMEOUT}s)")
         return False
     ok = collect_review("antigravity", out_file, log_file, proc.returncode,
                         getattr(proc, "stdout", "") or "")
+    if not ok:
+        diagnostic = agy_quota_diagnostic(
+            started_at, getattr(proc, "stdout", "") or "", getattr(proc, "stderr", "") or "")
+        record_failure_diagnostic("antigravity", out_file, log_file, diagnostic)
     print(f"  [{'OK' if ok else 'FAILED'}] antigravity (rc={proc.returncode}) -> {out_file.name}")
     return ok
 

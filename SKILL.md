@@ -275,6 +275,11 @@ python scripts/comfyui_profile.py --repo . --comfyui-root /workspace/ComfyUI --m
   agent calls (two reviewer agents x four rounds), which is fine, but the
   per-prompt ceiling can bite on high-volume loops. When it does, keep the
   round moving with `--only claude` or `--only codex --only claude`.
+- **Do not guess credits from a timeout.** When an Antigravity leg fails, Kibitz
+  scans recent `agy` CLI logs for quota markers (`RESOURCE_EXHAUSTED`, `code
+  429`, `check quota`, `Individual quota reached`) and annotates the failed
+  review file only when those markers exist. A plain `timeout waiting for
+  response` remains an `agy` timeout/print-mode failure.
 - **4 rounds is the arc.** Do not add passes beyond r4 unless the user asks.
 
 ## Conventions
