@@ -50,6 +50,12 @@ Configuration is via CLI args and environment variables only -- no hardcoded pat
   KIBITZ_CLAUDE_MODEL     Claude model alias/slug (default "sonnet"; "" = Claude default).
   KIBITZ_CLAUDE_EFFORT    Claude effort level (default "high"; low/medium/high/max).
   KIBITZ_DRIVER           Active driver: auto, none, codex, claude, antigravity/agy.
+  KIBITZ_QUOTA_CHECK      Set to 0/false/no to skip non-prompt quota preflight checks.
+  KIBITZ_QUOTA_WARN_THRESHOLDS
+                           Comma list of usage warning thresholds (default "50,70,90").
+  KIBITZ_QUOTA_RETRY_AFTER Suggested retry window after quota exhaustion (default "1h").
+  KIBITZ_<AGENT>_USAGE_PERCENT
+                           Optional explicit usage percent for codex, agy, or claude.
 
 SAFETY: Codex runs read-only (hard guarantee). Antigravity runs UNSANDBOXED
 (--dangerously-skip-permissions) because the file-handoff needs write approval; it is
@@ -63,6 +69,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -87,15 +94,29 @@ _WIN_AGY_BIN = os.path.expandvars(r"%LOCALAPPDATA%\agy\bin")
 _WIN_CLAUDE_BIN = os.path.expandvars(r"%USERPROFILE%\.local\bin")
 
 
-def _which(name: str, *extra_dirs: str):
-    exe = shutil.which(name)
-    if exe:
-        return exe
+def _is_windowsapps_alias(path: str) -> bool:
+    return "\\windowsapps\\" in str(path).lower().replace("/", "\\")
+
+
+def _extra_candidates(name: str, extra_dirs: tuple[str, ...]) -> list[str]:
+    found = []
     for d in extra_dirs:
         p = Path(d)
         if p.is_dir():
             for cand in p.rglob(name + ".exe"):
-                return str(cand)
+                found.append(str(cand))
+    return found
+
+
+def _which(name: str, *extra_dirs: str):
+    exe = shutil.which(name)
+    extras = _extra_candidates(name, extra_dirs)
+    if exe and not _is_windowsapps_alias(exe):
+        return exe
+    if extras:
+        return extras[0]
+    if exe:
+        return exe
     return None
 
 
@@ -117,19 +138,47 @@ AGY_PRINT_TIMEOUT = os.environ.get("KIBITZ_AGY_PRINT_TIMEOUT", "5m")
 CLAUDE_MODEL = os.environ.get("KIBITZ_CLAUDE_MODEL", "sonnet")
 CLAUDE_EFFORT = os.environ.get("KIBITZ_CLAUDE_EFFORT", "high")
 
-AGY_QUOTA_MARKERS = (
+QUOTA_CHECK_ENABLED = os.environ.get("KIBITZ_QUOTA_CHECK", "1").strip().lower() not in (
+    "0", "false", "no", "off",
+)
+QUOTA_STATUS_TIMEOUT = float(os.environ.get("KIBITZ_QUOTA_STATUS_TIMEOUT", "15"))
+QUOTA_WARN_THRESHOLDS_RAW = os.environ.get("KIBITZ_QUOTA_WARN_THRESHOLDS", "50,70,90")
+QUOTA_RETRY_AFTER_RAW = os.environ.get("KIBITZ_QUOTA_RETRY_AFTER", "1h")
+QUOTA_LOG_LOOKBACK_SECONDS = float(os.environ.get("KIBITZ_QUOTA_LOG_LOOKBACK_SECONDS", "3600"))
+QUOTA_BLOCK_ON_RECENT = os.environ.get("KIBITZ_QUOTA_BLOCK_ON_RECENT", "1").strip().lower() not in (
+    "0", "false", "no", "off",
+)
+
+QUOTA_MARKERS = (
     "resource_exhausted",
+    "insufficient_quota",
     "code 429",
     '"code": 429',
+    "http 429",
+    "429 too many requests",
+    "too many requests",
     "check quota",
     "quota reached",
     "quota limit",
     "quota exceeded",
+    "usage limit",
+    "limit reached",
+    "rate limit",
+    "rate_limit",
+    "credit balance",
+    "out of credits",
     "individual quota",
     "contact your administrator to enable overages",
     "enable overages",
 )
+AGY_QUOTA_MARKERS = QUOTA_MARKERS
 AGY_LOG_LOOKBACK_SECONDS = float(os.environ.get("KIBITZ_AGY_LOG_LOOKBACK_SECONDS", "60"))
+
+AGENT_LABELS = {
+    "codex": "Codex",
+    "antigravity": "Antigravity",
+    "claude": "Claude",
+}
 
 
 def pick_codex_model(exe: str, repo: Path, run_dir: Path):
@@ -205,7 +254,150 @@ def append_process_log(log_file: Path, text: str) -> None:
         log.write(text.rstrip() + "\n")
 
 
-def recent_agy_log_files(started_at: float) -> list[Path]:
+def parse_quota_thresholds(raw: str) -> list[float]:
+    thresholds = []
+    for part in raw.split(","):
+        part = part.strip().rstrip("%")
+        if not part:
+            continue
+        try:
+            value = float(part)
+        except ValueError:
+            continue
+        if 0 <= value <= 100 and value not in thresholds:
+            thresholds.append(value)
+    return sorted(thresholds)
+
+
+def parse_duration_seconds(raw: str) -> int:
+    text = raw.strip().lower()
+    if not text:
+        return 3600
+    match = re.fullmatch(r"(\d+(?:\.\d+)?)\s*([smhd]?)", text)
+    if not match:
+        return 3600
+    value = float(match.group(1))
+    unit = match.group(2) or "s"
+    multiplier = {"s": 1, "m": 60, "h": 3600, "d": 86400}[unit]
+    seconds = int(value * multiplier)
+    return max(60, seconds)
+
+
+def format_duration(seconds: int) -> str:
+    if seconds % 86400 == 0:
+        return f"{seconds // 86400}d"
+    if seconds % 3600 == 0:
+        return f"{seconds // 3600}h"
+    if seconds % 60 == 0:
+        return f"{seconds // 60}m"
+    return f"{seconds}s"
+
+
+QUOTA_WARN_THRESHOLDS = parse_quota_thresholds(QUOTA_WARN_THRESHOLDS_RAW) or [50.0, 70.0, 90.0]
+
+
+def safe_text(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
+def redact_status_text(text: str) -> str:
+    text = re.sub(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", "<email>", text)
+    text = re.sub(r'("(?:access|refresh|id)_?token"\s*:\s*")[^"]+', r"\1<redacted>", text)
+    text = re.sub(r'("(?:api[_-]?key|secret)"\s*:\s*")[^"]+', r"\1<redacted>", text, flags=re.I)
+    return text
+
+
+def usage_percent_from_env(agent: str):
+    keys_by_agent = {
+        "codex": ("KIBITZ_CODEX_USAGE_PERCENT", "KIBITZ_CODEX_QUOTA_PERCENT"),
+        "antigravity": (
+            "KIBITZ_ANTIGRAVITY_USAGE_PERCENT",
+            "KIBITZ_AGY_USAGE_PERCENT",
+            "KIBITZ_ANTIGRAVITY_QUOTA_PERCENT",
+            "KIBITZ_AGY_QUOTA_PERCENT",
+        ),
+        "claude": ("KIBITZ_CLAUDE_USAGE_PERCENT", "KIBITZ_CLAUDE_QUOTA_PERCENT"),
+    }
+    for key in keys_by_agent.get(agent, ()):
+        raw = os.environ.get(key)
+        if raw is None or raw.strip() == "":
+            continue
+        text = raw.strip().rstrip("%")
+        try:
+            return float(text), key
+        except ValueError:
+            return None, f"{key} (unparseable: {raw!r})"
+    return None, ""
+
+
+def usage_percent_from_text(text: str):
+    patterns = (
+        r"\b(?:usage|used|credits?|quota|limit|budget)[^\n\r%]{0,80}?(\d{1,3}(?:\.\d+)?)\s*%",
+        r"(\d{1,3}(?:\.\d+)?)\s*%[^\n\r]{0,80}\b(?:usage|used|credits?|quota|limit|budget)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.I)
+        if not match:
+            continue
+        try:
+            return float(match.group(1))
+        except ValueError:
+            continue
+    return None
+
+
+def quota_marker_lines(text: str, limit: int = 6) -> list[str]:
+    if not text:
+        return []
+    lines = [
+        line.strip()
+        for line in text.splitlines()
+        if any(marker in line.lower() for marker in QUOTA_MARKERS)
+    ]
+    return lines[-limit:]
+
+
+def append_quota_warning(run_dir: Path, message: str) -> None:
+    warning_file = run_dir / "quota_warnings.md"
+    with warning_file.open("a", encoding="utf-8") as handle:
+        handle.write(f"- {datetime.datetime.now().isoformat(timespec='seconds')} {message}\n")
+
+
+def reached_threshold(percent: float):
+    reached = [threshold for threshold in QUOTA_WARN_THRESHOLDS if percent >= threshold]
+    return reached[-1] if reached else None
+
+
+def run_status_command(exe: str, args: list[str], repo: Path) -> str:
+    label = " ".join([Path(exe).name] + args)
+    try:
+        proc = subprocess.run(
+            [exe] + args,
+            cwd=str(repo),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=QUOTA_STATUS_TIMEOUT,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return f"$ {label}\nFAILED: {exc}\n"
+    output = []
+    output.append(f"$ {label}")
+    output.append(f"rc={proc.returncode}")
+    if proc.stdout:
+        output.append("STDOUT:\n" + redact_status_text(proc.stdout.rstrip()))
+    if proc.stderr:
+        output.append("STDERR:\n" + redact_status_text(proc.stderr.rstrip()))
+    return "\n".join(output).rstrip() + "\n"
+
+
+def recent_agy_log_files(started_at: float, lookback_seconds: float = AGY_LOG_LOOKBACK_SECONDS) -> list[Path]:
     """Return recent Antigravity CLI logs that could belong to this agy run."""
     base = Path.home() / ".gemini" / "antigravity-cli"
     candidates = []
@@ -216,7 +408,7 @@ def recent_agy_log_files(started_at: float) -> list[Path]:
     if log_dir.is_dir():
         candidates.extend(log_dir.glob("*.log"))
 
-    cutoff = started_at - AGY_LOG_LOOKBACK_SECONDS
+    cutoff = started_at - lookback_seconds
     recent = []
     for path in candidates:
         try:
@@ -241,24 +433,27 @@ def tail_text(path: Path, max_bytes: int = 200_000) -> str:
     return data.decode("utf-8", errors="replace")
 
 
-def agy_quota_diagnostic(started_at: float, stdout_text: str = "", stderr_text: str = "") -> str:
-    """Detect quota/backend exhaustion in agy's own output or recent CLI logs."""
+def output_quota_diagnostic(agent: str, stdout_text: str = "", stderr_text: str = "") -> str:
+    """Detect quota/backend exhaustion in an agent's own output."""
     combined = "\n".join(part for part in (stdout_text, stderr_text) if part)
-    lowered = combined.lower()
-    if any(marker in lowered for marker in AGY_QUOTA_MARKERS):
-        return "Antigravity quota/backend exhaustion detected in agy output."
+    lines = quota_marker_lines(combined)
+    if lines:
+        label = AGENT_LABELS.get(agent, agent)
+        return (
+            f"{label} quota/rate-limit marker detected in agent output:\n"
+            + "\n".join(lines)
+        )
+    return ""
 
-    for path in recent_agy_log_files(started_at):
+
+def agy_log_quota_diagnostic(started_at: float, lookback_seconds: float = AGY_LOG_LOOKBACK_SECONDS) -> str:
+    """Detect Antigravity quota/backend exhaustion in recent CLI logs."""
+    for path in recent_agy_log_files(started_at, lookback_seconds):
         text = tail_text(path)
-        lowered = text.lower()
-        if not any(marker in lowered for marker in AGY_QUOTA_MARKERS):
+        lines = quota_marker_lines(text)
+        if not lines:
             continue
-        lines = [
-            line.strip()
-            for line in text.splitlines()
-            if any(marker in line.lower() for marker in AGY_QUOTA_MARKERS)
-        ]
-        excerpt = "\n".join(lines[-6:])
+        excerpt = "\n".join(lines)
         if excerpt:
             return (
                 "Antigravity quota/backend exhaustion detected in recent CLI log "
@@ -266,6 +461,119 @@ def agy_quota_diagnostic(started_at: float, stdout_text: str = "", stderr_text: 
             )
         return f"Antigravity quota/backend exhaustion detected in recent CLI log {path}."
     return ""
+
+
+def quota_diagnostic(agent: str, started_at: float, stdout_text: str = "", stderr_text: str = "") -> str:
+    diagnostic = output_quota_diagnostic(agent, stdout_text, stderr_text)
+    if diagnostic:
+        return diagnostic
+    if agent == "antigravity":
+        return agy_log_quota_diagnostic(started_at, AGY_LOG_LOOKBACK_SECONDS)
+    return ""
+
+
+def agy_quota_diagnostic(started_at: float, stdout_text: str = "", stderr_text: str = "") -> str:
+    """Backward-compatible wrapper for Antigravity quota/backend detection."""
+    return quota_diagnostic("antigravity", started_at, stdout_text, stderr_text)
+
+
+def quota_preflight(agent: str, exe: str, repo: Path, run_dir: Path) -> str:
+    """Write a cheap per-agent quota/auth status file. Return a hard quota blocker, if any."""
+    status_file = run_dir / f"{agent}_quota_status.txt"
+    label = AGENT_LABELS.get(agent, agent)
+    if not QUOTA_CHECK_ENABLED:
+        status_file.write_text("quota_check=disabled\n", encoding="utf-8")
+        return ""
+
+    commands = {
+        "codex": [["login", "status"]],
+        "antigravity": [["models"]],
+        "claude": [["auth", "status"]],
+    }.get(agent, [])
+    command_text = "\n".join(run_status_command(exe, args, repo) for args in commands)
+    percent, percent_source = usage_percent_from_env(agent)
+    if percent is None:
+        percent = usage_percent_from_text(command_text)
+        if percent is not None:
+            percent_source = "status output"
+
+    lines = [
+        f"agent={agent}",
+        "quota_check=enabled",
+        "thresholds=" + ",".join("%g" % threshold for threshold in QUOTA_WARN_THRESHOLDS),
+    ]
+    if percent is None:
+        lines.append("usage_percent=unknown")
+        if percent_source:
+            lines.append(f"usage_percent_source={percent_source}")
+    else:
+        lines.append(f"usage_percent={percent:g}")
+        lines.append(f"usage_percent_source={percent_source or 'detected'}")
+        threshold = reached_threshold(percent)
+        if threshold is not None:
+            message = f"{label} usage {percent:g}% is at/above the {threshold:g}% warning threshold."
+            print(f"  [QUOTA] {message}")
+            append_quota_warning(run_dir, message)
+
+    blocker = ""
+    output_diagnostic = output_quota_diagnostic(agent, command_text, "")
+    if output_diagnostic:
+        lines.append("")
+        lines.append("[quota diagnostic]")
+        lines.append(output_diagnostic)
+        print(f"  [QUOTA] {output_diagnostic.splitlines()[0]}")
+        append_quota_warning(run_dir, output_diagnostic.splitlines()[0])
+        blocker = output_diagnostic
+    if agent == "antigravity":
+        log_diagnostic = agy_log_quota_diagnostic(time.time(), QUOTA_LOG_LOOKBACK_SECONDS)
+        if log_diagnostic:
+            lines.append("")
+            lines.append("[recent antigravity log diagnostic]")
+            lines.append(log_diagnostic)
+            print(f"  [QUOTA] {log_diagnostic.splitlines()[0]}")
+            append_quota_warning(run_dir, log_diagnostic.splitlines()[0])
+            blocker = blocker or log_diagnostic
+    if command_text:
+        lines.append("")
+        lines.append("[status commands]")
+        lines.append(command_text.rstrip())
+    status_file.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    return blocker if QUOTA_BLOCK_ON_RECENT else ""
+
+
+def record_quota_hold(name: str, out_file: Path, diagnostic: str) -> None:
+    label = AGENT_LABELS.get(name, name)
+    seconds = parse_duration_seconds(QUOTA_RETRY_AFTER_RAW)
+    retry_at = datetime.datetime.now().astimezone() + datetime.timedelta(seconds=seconds)
+    retry_window = format_duration(seconds)
+    summary = (
+        f"{label} failed on quota/credit/rate-limit usage. Suggested retry after "
+        f"{retry_window} ({retry_at.isoformat(timespec='minutes')})."
+    )
+    print(f"  [QUOTA] {summary}")
+    print("  [QUOTA] Driver should ask the user when to retry, or continue without this lane.")
+    append_quota_warning(out_file.parent, summary)
+    hold_file = out_file.parent / f"{name}_quota_hold.md"
+    hold_file.write_text(
+        "\n".join([
+            f"# {label} Quota Hold",
+            "",
+            summary,
+            "",
+            "Kibitz detected provider quota, credit, or rate-limit markers for this lane.",
+            "The active driver should acknowledge this to the user and ask when to retry.",
+            "If the user does not choose a time, use the suggested retry window above.",
+            "",
+            "To change the built-in retry window, set `KIBITZ_QUOTA_RETRY_AFTER`",
+            "(examples: `30m`, `1h`, `4h`, `1d`) before rerunning Kibitz.",
+            "",
+            "## Diagnostic",
+            "",
+            diagnostic.strip(),
+            "",
+        ]),
+        encoding="utf-8",
+    )
 
 
 def record_failure_diagnostic(name: str, out_file: Path, log_file: Path, diagnostic: str) -> None:
@@ -281,6 +589,7 @@ def record_failure_diagnostic(name: str, out_file: Path, log_file: Path, diagnos
         out_file.write_text(existing + "\n\n" + note + "\n", encoding="utf-8")
     else:
         out_file.write_text(note + "\n", encoding="utf-8")
+    record_quota_hold(name, out_file, diagnostic)
 
 
 def collect_review(
@@ -380,9 +689,14 @@ def run_codex(prompt: str, repo: Path, out_file: Path, log_file: Path) -> bool:
                             encoding="utf-8")
         print("  x codex: command not found")
         return False
+    run_dir = out_file.parent
+    preflight_blocker = quota_preflight("codex", exe, repo, run_dir)
+    if preflight_blocker:
+        record_failure_diagnostic("codex", out_file, log_file, preflight_blocker)
+        print("  [FAILED] codex (quota preflight)")
+        return False
     if out_file.exists():
         out_file.unlink()
-    run_dir = out_file.parent
     model = pick_codex_model(exe, repo, run_dir)
     (run_dir / "codex_model_selected.txt").write_text(model or "(codex default)", encoding="utf-8")
     (run_dir / "codex_reasoning_selected.txt").write_text(CODEX_REASONING, encoding="utf-8")
@@ -401,14 +715,22 @@ def run_codex(prompt: str, repo: Path, out_file: Path, log_file: Path) -> bool:
         write_process_log(log_file, proc.stdout or "", proc.stderr or "")
         return proc
 
+    started_at = time.time()
     proc = _run(CODEX_REASONING)
     ok = collect_review("codex", out_file, log_file, proc.returncode, proc.stdout or "")
-    if not ok and CODEX_REASONING == "xhigh":
+    diagnostic = "" if ok else quota_diagnostic("codex", started_at, proc.stdout or "", proc.stderr or "")
+    if not ok and diagnostic:
+        record_failure_diagnostic("codex", out_file, log_file, diagnostic)
+    if not ok and not diagnostic and CODEX_REASONING == "xhigh":
         print("  .. xhigh failed -> retry once with high")
         (run_dir / "codex_reasoning_selected.txt").write_text("high (xhigh failed)",
                                                               encoding="utf-8")
+        started_at = time.time()
         proc = _run("high")
         ok = collect_review("codex", out_file, log_file, proc.returncode, proc.stdout or "")
+        if not ok:
+            diagnostic = quota_diagnostic("codex", started_at, proc.stdout or "", proc.stderr or "")
+            record_failure_diagnostic("codex", out_file, log_file, diagnostic)
     print(f"  [{'OK' if ok else 'FAILED'}] codex (rc={proc.returncode}, model={model or 'default'})")
     return ok
 
@@ -421,6 +743,13 @@ def run_agy(prompt: str, repo: Path, out_file: Path, log_file: Path) -> bool:
         log_file.write_text(r"agy not found on PATH or in %LOCALAPPDATA%\agy\bin",
                             encoding="utf-8")
         print("  x antigravity: command not found")
+        return False
+    if out_file.exists():
+        out_file.unlink()
+    preflight_blocker = quota_preflight("antigravity", exe, repo, out_file.parent)
+    if preflight_blocker:
+        record_failure_diagnostic("antigravity", out_file, log_file, preflight_blocker)
+        print("  [FAILED] antigravity (quota preflight)")
         return False
     if out_file.exists():
         out_file.unlink()
@@ -437,8 +766,9 @@ def run_agy(prompt: str, repo: Path, out_file: Path, log_file: Path) -> bool:
                               capture_output=True, encoding="utf-8", errors="replace",
                               timeout=PER_AGENT_TIMEOUT)
         write_process_log(log_file, proc.stdout or "", proc.stderr or "")
-    except subprocess.TimeoutExpired:
-        diagnostic = agy_quota_diagnostic(started_at)
+    except subprocess.TimeoutExpired as exc:
+        diagnostic = quota_diagnostic(
+            "antigravity", started_at, safe_text(exc.stdout), safe_text(exc.stderr))
         record_failure_diagnostic("antigravity", out_file, log_file, diagnostic)
         print(f"  [FAILED] antigravity (timeout after {PER_AGENT_TIMEOUT}s)")
         return False
@@ -463,6 +793,13 @@ def run_claude(prompt: str, repo: Path, out_file: Path, log_file: Path) -> bool:
         return False
     if out_file.exists():
         out_file.unlink()
+    preflight_blocker = quota_preflight("claude", exe, repo, out_file.parent)
+    if preflight_blocker:
+        record_failure_diagnostic("claude", out_file, log_file, preflight_blocker)
+        print("  [FAILED] claude (quota preflight)")
+        return False
+    if out_file.exists():
+        out_file.unlink()
     full = prompt + FILE_OUTPUT_DIRECTIVE.format(out_path=str(out_file))
     cmd = [
         exe,
@@ -483,15 +820,21 @@ def run_claude(prompt: str, repo: Path, out_file: Path, log_file: Path) -> bool:
     (out_file.parent / "claude_effort_selected.txt").write_text(
         CLAUDE_EFFORT or "(claude default)", encoding="utf-8")
     print(f"  -> claude: model={CLAUDE_MODEL or 'default'} effort={CLAUDE_EFFORT or 'default'} file-handoff -> {out_file.name}")
+    started_at = time.time()
     try:
         proc = subprocess.run(cmd, stdin=subprocess.DEVNULL, cwd=str(repo),
                               capture_output=True, text=True, encoding="utf-8",
                               errors="replace", timeout=PER_AGENT_TIMEOUT)
         write_process_log(log_file, proc.stdout or "", proc.stderr or "")
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as exc:
+        diagnostic = quota_diagnostic("claude", started_at, safe_text(exc.stdout), safe_text(exc.stderr))
+        record_failure_diagnostic("claude", out_file, log_file, diagnostic)
         print(f"  [FAILED] claude (timeout after {PER_AGENT_TIMEOUT}s)")
         return False
     ok = collect_review("claude", out_file, log_file, proc.returncode, proc.stdout or "")
+    if not ok:
+        diagnostic = quota_diagnostic("claude", started_at, proc.stdout or "", proc.stderr or "")
+        record_failure_diagnostic("claude", out_file, log_file, diagnostic)
     print(f"  [{'OK' if ok else 'FAILED'}] claude (rc={proc.returncode}) -> {out_file.name}")
     return ok
 

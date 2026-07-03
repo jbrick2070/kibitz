@@ -212,8 +212,11 @@ python scripts/kibitz.py \
   `python scripts/kibitz.py "harden the ending-mode plan" --round r1`.
 
 Output lands in `<repo>/kibitz-runs/<YYYY-MM-DD>-<topic>/<round>/` as
-`input.md`, `profiles_used.txt`, `<agent>.md`, and `<agent>.log`. The driver
-then writes `final.md` there after grounding and synthesis.
+`input.md`, `profiles_used.txt`, `<agent>.md`, `<agent>.log`, and lightweight
+quota/status files such as `<agent>_quota_status.txt`. If a provider reports
+quota, credit, or rate-limit exhaustion, Kibitz also writes
+`<agent>_quota_hold.md` with the diagnostic and a suggested retry window. The
+driver then writes `final.md` there after grounding and synthesis.
 
 ## ComfyUI local profile helper
 
@@ -271,11 +274,23 @@ python scripts/comfyui_profile.py --repo . --comfyui-root /workspace/ComfyUI --m
   *contains a review* rather than an error message. If it is empty (or is an
   "I can't access the repo" note) with exit 0, the agent ignored the write
   directive: check `<agent>.log` and re-run once.
-- **`agy` has a per-prompt quota.** A normal driver-aware full arc is 8 external
-  agent calls (two reviewer agents x four rounds), which is fine, but the
-  per-prompt ceiling can bite on high-volume loops. When it does, keep the
-  round moving with `--only claude` or `--only codex --only claude`.
-- **Do not guess credits from a timeout.** When an Antigravity leg fails, Kibitz
+- **All lanes can hit quota, credit, or rate limits.** A normal driver-aware
+  full arc is 8 external agent calls (two reviewer agents x four rounds), which
+  is fine, but high-volume loops can still bite. Kibitz writes
+  `<agent>_quota_status.txt` for each selected lane and `quota_warnings.md`
+  when it has something worth surfacing.
+- **Warn on usage only when there is a real number.** The default warning
+  thresholds are 50/70/90 percent (`KIBITZ_QUOTA_WARN_THRESHOLDS`). Current CLI
+  status surfaces do not always expose percentages, so Kibitz also accepts
+  explicit overrides such as `KIBITZ_CODEX_USAGE_PERCENT`,
+  `KIBITZ_AGY_USAGE_PERCENT`, and `KIBITZ_CLAUDE_USAGE_PERCENT`.
+- **Acknowledge confirmed quota failures to the user.** When a lane reports
+  provider quota, credit, or rate-limit markers, Kibitz annotates the failed
+  review, writes `<agent>_quota_hold.md`, prints the suggested retry window, and
+  the driver should tell the user plainly: this lane failed on quota/credit
+  usage. Ask when they want to retry, or use the built-in retry window
+  (`KIBITZ_QUOTA_RETRY_AFTER`, default `1h`).
+- **Do not guess credits from a timeout.** For Antigravity specifically, Kibitz
   scans recent `agy` CLI logs for quota markers (`RESOURCE_EXHAUSTED`, `code
   429`, `check quota`, `Individual quota reached`) and annotates the failed
   review file only when those markers exist. A plain `timeout waiting for

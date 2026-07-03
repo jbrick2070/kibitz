@@ -63,16 +63,30 @@ REQUIRED_FILES = [
 ]
 
 
+def is_windowsapps_alias(path: str) -> bool:
+    return "\\windowsapps\\" in str(path).lower().replace("/", "\\")
+
+
+def extra_candidates(name: str, win_dir: str) -> list[str]:
+    found = []
+    d = Path(win_dir)
+    if d.is_dir():
+        for cand in d.rglob(name + ".exe"):
+            found.append(str(cand))
+    return found
+
+
 def find_agent(name: str, win_dir: str):
     """Find an agent CLI: PATH first, then the Windows per-user install dir.
     Returns the full path string, or None if not found."""
     exe = shutil.which(name)
+    extras = extra_candidates(name, win_dir)
+    if exe and not is_windowsapps_alias(exe):
+        return exe
+    if extras:
+        return extras[0]
     if exe:
         return exe
-    d = Path(win_dir)
-    if d.is_dir():
-        for cand in d.rglob(name + ".exe"):
-            return str(cand)
     return None
 
 

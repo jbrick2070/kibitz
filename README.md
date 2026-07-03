@@ -281,7 +281,10 @@ read your real code and write their own reviews, and then **the active driver is
 the judge**: it grounds every claim each agent makes against your actual code,
 throws out the ones that are wrong, and folds the rest into a better version of
 the plan. The output lands in a `kibitz-runs\` folder inside your repo, so you
-have a full record of what was suggested, kept, and rejected.
+have a full record of what was suggested, kept, and rejected. Each run also gets
+lightweight quota/status files like `<agent>_quota_status.txt`; if a provider
+reports quota, credit, or rate-limit exhaustion, Kibitz writes
+`<agent>_quota_hold.md` with the diagnostic and a suggested retry window.
 
 ## Troubleshooting
 
@@ -293,6 +296,8 @@ have a full record of what was suggested, kept, and rejected.
 | Only one agent is installed | Kibitz still runs with the one you have (a "degraded" one-agent panel). It only fails if all agents are missing. |
 | Antigravity is out of quota | Use `--only codex --only claude` for that round. |
 | Antigravity says only `timeout waiting for response` | Check `<run>\antigravity.log`. If recent `agy` CLI logs contain `RESOURCE_EXHAUSTED`, `code 429`, `check quota`, or `Individual quota reached`, Kibitz annotates the failed review file with a quota/backend exhaustion diagnostic. Without those markers, treat it as an `agy` timeout/print-mode failure, not proven credits. |
+| Kibitz writes `<agent>_quota_hold.md` | Tell the user this lane failed on quota/credit/rate-limit usage. Ask when they want to retry, or use the built-in retry window in the hold file. Default is `1h`; override with `KIBITZ_QUOTA_RETRY_AFTER=30m`, `4h`, etc. |
+| You want earlier usage warnings | Keep the default `KIBITZ_QUOTA_WARN_THRESHOLDS=50,70,90` or change it. Warnings fire only when Kibitz has a real percentage from a status surface or an explicit env override such as `KIBITZ_CODEX_USAGE_PERCENT`, `KIBITZ_AGY_USAGE_PERCENT`, or `KIBITZ_CLAUDE_USAGE_PERCENT`. |
 | Antigravity exits rc=0 but produces no review | Kibitz treats that as a failed leg, not success. This is the known captured-stdout drop in `agy -p` (#76/#408); the remaining reviewer lanes and the driver anchor can continue. |
 | Kibitz picked the wrong driver | Pass `--driver claude`, `--driver codex`, `--driver agy`, or set `KIBITZ_DRIVER` before launching it. |
 

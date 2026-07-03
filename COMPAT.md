@@ -13,13 +13,42 @@ CLI flags, the model-selection policy, and the tool versions this was proven on.
 
 | Tool | Version proven | Notes |
 |------|----------------|-------|
-| Codex CLI (`codex`) | running model `gpt-5.5` | `codex exec` non-interactive mode |
-| Antigravity (`agy`) | `1.0.13` | no `--headless`, no `--approve`, no `models` subcommand |
+| Codex CLI (`codex`) | `0.142.5`, running model `gpt-5.5` | `codex exec` non-interactive mode |
+| Antigravity (`agy`) | `1.0.16` | no `--headless`, no `--approve`; `agy models` is available for preflight |
 | Claude Code (`claude`) | `2.1.72` | `claude -p` non-interactive mode |
 | GitHub CLI (`gh`) | `2.89` | optional; only if you script repo setup |
 
 These are the versions the invocations below were verified against. Newer
 versions may rename or remove flags - check `--help` first.
+
+## Quota, credit, and retry behavior
+
+Kibitz performs a cheap, non-prompt quota/auth preflight for each selected lane
+before it spends an agent call:
+
+- Codex: `codex login status`
+- Antigravity: `agy models`, plus recent Antigravity CLI logs
+- Claude Code: `claude auth status`
+
+The preflight writes `<agent>_quota_status.txt` in the run folder. If Kibitz has
+a real usage percentage, it warns at the configured thresholds (default
+`KIBITZ_QUOTA_WARN_THRESHOLDS=50,70,90`) and appends to `quota_warnings.md`.
+Current Codex, Antigravity, and Claude Code status surfaces do not reliably
+expose usage percentages, so threshold warnings also accept explicit environment
+overrides: `KIBITZ_CODEX_USAGE_PERCENT`, `KIBITZ_AGY_USAGE_PERCENT`, and
+`KIBITZ_CLAUDE_USAGE_PERCENT`.
+
+Hard provider markers such as `RESOURCE_EXHAUSTED`, `code 429`, `check quota`,
+`Individual quota reached`, `rate limit`, or `out of credits` are handled
+differently. Kibitz annotates the failed `<agent>.md`, writes
+`<agent>_quota_hold.md`, prints a user-facing acknowledgment, and suggests a
+retry window. Default retry window is `KIBITZ_QUOTA_RETRY_AFTER=1h`; examples:
+`30m`, `4h`, `1d`.
+
+For recent Antigravity CLI log markers, Kibitz blocks that lane by default
+instead of immediately burning another hanging attempt. Override with
+`KIBITZ_QUOTA_BLOCK_ON_RECENT=0` only when you intentionally want to force a
+fresh call.
 
 ## Codex
 
@@ -65,12 +94,12 @@ agy --model <model> --dangerously-skip-permissions --print-timeout 5m \
 ```
 
 - `agy` has **no** read-only-that-still-writes sandbox, **no** `--headless`,
-  **no** `--approve`, and **no** `models` subcommand (verified on agy 1.0.13).
-  Do not invoke any of those - they do not exist on this version.
+  and **no** `--approve` (verified on agy 1.0.16). Do not invoke those - they
+  do not exist on this version.
 - Because `agy -p` swallows stdout when redirected, the review is delivered by
   **file-handoff**: the prompt instructs `agy` to WRITE its complete review to a
   specific output file with its own write tool, then stop.
-- On agy 1.0.13, captured subprocess launches have two known failure modes:
+- On agy 1.0.16, captured subprocess launches have two known failure modes:
   inherited stdin can hang startup (#508), and captured stdout can be empty even
   with rc=0 (#76/#408). Kibitz closes stdin with `stdin=subprocess.DEVNULL`,
   reads the output file first, and treats rc=0 with no file/stdout text as a

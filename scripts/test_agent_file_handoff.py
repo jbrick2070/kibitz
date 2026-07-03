@@ -55,12 +55,24 @@ def main() -> int:
         print(json.dumps({"models": [{"slug": "gpt-5"}]}))
         return 0
 
+    if agent == "codex" and args[:2] == ["login", "status"]:
+        print("Logged in using ChatGPT")
+        return 0
+
     if agent == "codex":
         print("CODEX STDOUT REVIEW")
         return 0
 
+    if agent == "claude" and args[:2] == ["auth", "status"]:
+        print(json.dumps({"loggedIn": True, "subscriptionType": "max"}))
+        return 0
+
     if agent == "claude":
         print("CLAUDE STDOUT REVIEW")
+        return 0
+
+    if agent == "agy" and args[:1] == ["models"]:
+        print("Gemini Stub (High)")
         return 0
 
     if agent == "agy":
@@ -86,16 +98,10 @@ def write_stub_launchers(fake_bin: Path) -> None:
     for agent in ("codex", "agy", "claude"):
         if os.name == "nt":
             launcher = fake_bin / f"{agent}.cmd"
-            if agent == "codex":
-                body = (
-                    "@echo off\n"
-                    f'"{sys.executable}" "%~dp0stub_agent.py" codex %1 %2\n'
-                )
-            else:
-                body = (
-                    "@echo off\n"
-                    f'"{sys.executable}" "%~dp0stub_agent.py" {agent}\n'
-                )
+            body = (
+                "@echo off\n"
+                f'"{sys.executable}" "%~dp0stub_agent.py" {agent} %*\n'
+            )
             launcher.write_text(body, encoding="utf-8")
         else:
             launcher = fake_bin / agent
@@ -199,6 +205,18 @@ def main() -> int:
         env["KIBITZ_CLAUDE_EFFORT"] = ""
         env["HOME"] = str(fake_home)
         env["USERPROFILE"] = str(fake_home)
+        for key in (
+            "KIBITZ_CODEX_QUOTA_PERCENT",
+            "KIBITZ_ANTIGRAVITY_USAGE_PERCENT",
+            "KIBITZ_AGY_USAGE_PERCENT",
+            "KIBITZ_ANTIGRAVITY_QUOTA_PERCENT",
+            "KIBITZ_AGY_QUOTA_PERCENT",
+            "KIBITZ_CLAUDE_USAGE_PERCENT",
+            "KIBITZ_CLAUDE_QUOTA_PERCENT",
+        ):
+            env.pop(key, None)
+        env["KIBITZ_CODEX_USAGE_PERCENT"] = "72"
+        env["KIBITZ_QUOTA_RETRY_AFTER"] = "30m"
 
         ok = run_kibitz(repo, plan, env, "stub-pass", "codex", "claude", "agy")
         if ok.returncode != 0:
@@ -213,6 +231,8 @@ def main() -> int:
         assert_contains(first / "codex.md", "CODEX STDOUT REVIEW", ok)
         assert_contains(first / "claude.md", "CLAUDE STDOUT REVIEW", ok)
         assert_contains(first / "antigravity.md", "AGY FILE REVIEW", ok)
+        assert_contains(first / "codex_quota_status.txt", "usage_percent=72", ok)
+        assert_contains(first / "quota_warnings.md", "Codex usage 72%", ok)
 
         empty_env = env.copy()
         empty_env["KIBITZ_STUB_AGY_MODE"] = "empty"
@@ -226,12 +246,15 @@ def main() -> int:
                 stderr:
                 {degraded.stderr}
             """))
-        if "agy #76" not in degraded.stdout:
-            raise AssertionError("missing agy #76 failure note")
+        if "quota preflight" not in degraded.stdout:
+            raise AssertionError("missing quota preflight failure note")
         second = run_dir(repo, "stub-empty")
         assert_contains(second / "codex.md", "CODEX STDOUT REVIEW", degraded)
         assert_contains(second / "antigravity.md", "RESOURCE_EXHAUSTED", degraded)
         assert_contains(second / "antigravity.log", "quota/backend exhaustion", degraded)
+        assert_contains(second / "antigravity_quota_hold.md", "Suggested retry", degraded)
+        assert_contains(second / "antigravity_quota_hold.md", "ask when to retry", degraded)
+        assert_contains(second / "quota_warnings.md", "Antigravity", degraded)
         empty_review = second / "antigravity.md"
         if "AGY FILE REVIEW" in empty_review.read_text(encoding="utf-8"):
             raise AssertionError("empty agy leg produced a fake review")
