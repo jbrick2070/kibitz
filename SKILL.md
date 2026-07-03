@@ -38,6 +38,13 @@ Use `--driver claude|codex|agy|none` when the host is not auto-detected. Use
 repeated `--only` flags for fallbacks, such as `--only codex --only claude` when
 Antigravity is out of quota.
 
+**Host UI boundary:** when Kibitz is invoked from a product UI, that live UI is
+the driver/panelist for its model family. Do not launch the same system's CLI as
+a second reviewer from the base OS. In Antigravity UI, use `--driver agy` (or
+`--only codex --only claude`) so Antigravity participates through the UI anchor,
+not through an `agy` subprocess. Avoid `--all-agents` / `--only agy` in that
+context unless you are intentionally testing the CLI outside the UI.
+
 > **Exact CLI flags, model-selection policy, and the versions this was proven
 > on live in [`COMPAT.md`](COMPAT.md).** They move fast; keep them out of your
 > head and check that file when a flag stops working. This SKILL.md is the

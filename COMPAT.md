@@ -86,6 +86,11 @@ codex exec -C <repo> --sandbox read-only --json --color never \
 
 ## Antigravity (`agy`)
 
+When the active host is the Antigravity UI, do not launch `agy` as a reviewer
+from the base OS. Use `--driver agy` so the UI is the Antigravity lane and only
+Codex + Claude Code are fanned out. The `agy` CLI lane below is for non-UI hosts
+or explicit CLI testing.
+
 Invocation (one review, file-handoff):
 
 ```

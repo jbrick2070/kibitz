@@ -264,6 +264,13 @@ python scripts/kibitz.py --doc plan.md --round r1 --driver none
   `.kibitz\comfyui.local.md` exists in the target repo, Kibitz auto-adds it and
   the generic profile. Use `--no-profiles` for a profile-free run.
 
+When Kibitz is invoked from a product UI, that live UI is already the
+driver/panelist for its model family. Do not launch the same system's CLI as a
+second reviewer from the base OS. In Antigravity UI, use `--driver agy` (or
+`--only codex --only claude`) so Antigravity participates through the UI anchor,
+not through an `agy` subprocess. Avoid `--all-agents` / `--only agy` there unless
+you are intentionally testing the CLI outside the UI.
+
 ## How to use it day to day
 
 Point your active host at a plan, spec, or design doc and say "run kibitz on this." Kibitz
