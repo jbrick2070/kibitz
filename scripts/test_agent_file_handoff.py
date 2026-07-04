@@ -234,6 +234,25 @@ def main() -> int:
         assert_contains(first / "codex_quota_status.txt", "usage_percent=72", ok)
         assert_contains(first / "quota_warnings.md", "Codex usage 72%", ok)
 
+        budget_env = env.copy()
+        budget_env.pop("KIBITZ_CLAUDE_MODEL", None)
+        budget_env.pop("KIBITZ_CLAUDE_EFFORT", None)
+        budget_env["KIBITZ_CLAUDE_BUDGET"] = "high"
+        budget = run_kibitz(repo, plan, budget_env, "stub-claude-budget", "claude")
+        if budget.returncode != 0:
+            raise AssertionError(textwrap.dedent(f"""\
+                expected successful claude budget pass
+                stdout:
+                {budget.stdout}
+                stderr:
+                {budget.stderr}
+            """))
+        budget_dir = run_dir(repo, "stub-claude-budget")
+        assert_contains(budget_dir / "claude.md", "CLAUDE STDOUT REVIEW", budget)
+        assert_contains(budget_dir / "claude_budget_selected.txt", "budget=high", budget)
+        assert_contains(budget_dir / "claude_budget_selected.txt", "model=opus", budget)
+        assert_contains(budget_dir / "claude_budget_selected.txt", "effort=max", budget)
+
         empty_env = env.copy()
         empty_env["KIBITZ_STUB_AGY_MODE"] = "empty"
         write_agy_quota_log(fake_home)

@@ -168,10 +168,24 @@ claude -p \
 
 ### Claude model + effort policy
 
-- Default model alias: **`sonnet`** (override via `KIBITZ_CLAUDE_MODEL`; set to
-  `""` to use Claude Code's own default).
-- Default effort: **`high`** (override via `KIBITZ_CLAUDE_EFFORT`; supported
-  values on Claude Code 2.1.72 are `low`, `medium`, `high`, and `max`).
+- Claude Code does **not** currently expose a native first-party `auto` model
+  router in the local CLI help. Kibitz therefore uses an explicit spend tier
+  instead of pretending auto-routing exists.
+- Default spend tier: **`KIBITZ_CLAUDE_BUDGET=medium`**, which resolves to
+  `--model sonnet --effort high` and preserves the previous default behavior.
+- Supported spend tiers:
+
+  | Tier | Model | Effort | Intended use |
+  |------|-------|--------|--------------|
+  | `low` / `cheap` | `haiku` | `medium` | quick/cheap sanity checks |
+  | `medium` / `med` / `standard` | `sonnet` | `high` | default review lane |
+  | `high` / `deep` | `opus` | `max` | expensive deep review |
+  | `plan` / `opusplan` | `opusplan` | `high` | Claude Code's planning-biased alias when available |
+
+- Explicit overrides win: set `KIBITZ_CLAUDE_MODEL` or
+  `KIBITZ_CLAUDE_EFFORT` to override the tier's chosen value. Set either to
+  `""` to use Claude Code's own default for that field. If Claude Code later
+  ships a native `auto` alias, use `KIBITZ_CLAUDE_MODEL=auto`.
 - When `agy` is out of quota, the practical fallback is `--only claude` or
   `--only codex --only claude`.
 

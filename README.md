@@ -271,6 +271,12 @@ second reviewer from the base OS. In Antigravity UI, use `--driver agy` (or
 not through an `agy` subprocess. Avoid `--all-agents` / `--only agy` there unless
 you are intentionally testing the CLI outside the UI.
 
+For the Claude Code reviewer lane, Kibitz has an explicit spend dial rather than
+a fake native auto-router: set `KIBITZ_CLAUDE_BUDGET=low`, `medium`, `high`, or
+`plan`. The default `medium` keeps the existing `sonnet` / `high` behavior;
+`high` opts into `opus` / `max`. Exact mappings live in `COMPAT.md`, and
+`KIBITZ_CLAUDE_MODEL` / `KIBITZ_CLAUDE_EFFORT` still override the tier.
+
 ## How to use it day to day
 
 Point your active host at a plan, spec, or design doc and say "run kibitz on this." Kibitz

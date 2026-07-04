@@ -213,6 +213,11 @@ python scripts/kibitz.py \
   calling any agents; use it to confirm host detection without spending prompts.
 - If `agy` is out of quota, use `--only claude` or repeat
   `--only codex --only claude`.
+- For the Claude Code reviewer lane, control spend with
+  `KIBITZ_CLAUDE_BUDGET=low|medium|high|plan`. This is an explicit Kibitz tier,
+  not a native Claude auto-router. Default `medium` preserves the normal
+  `sonnet` / `high` behavior; `KIBITZ_CLAUDE_MODEL` and
+  `KIBITZ_CLAUDE_EFFORT` override the tier.
 - `--timeout <seconds>` is optional; default is no ceiling (agents batch and can
   take minutes). Only set it if you need to bail on a hung agent.
 - Inline text works instead of `--doc`:

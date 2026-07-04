@@ -47,8 +47,9 @@ Usage:
 Configuration is via CLI args and environment variables only -- no hardcoded paths.
   KIBITZ_CODEX_REASONING  Codex reasoning effort (default "high"; "xhigh" retries to "high").
   KIBITZ_AGY_MODEL        Antigravity model slug (default "gemini-3.5-pro"; "" = agy default).
-  KIBITZ_CLAUDE_MODEL     Claude model alias/slug (default "sonnet"; "" = Claude default).
-  KIBITZ_CLAUDE_EFFORT    Claude effort level (default "high"; low/medium/high/max).
+  KIBITZ_CLAUDE_BUDGET    Claude spend tier: low, medium, high, or plan (default "medium").
+  KIBITZ_CLAUDE_MODEL     Claude model alias/slug override ("" = Claude default).
+  KIBITZ_CLAUDE_EFFORT    Claude effort override (low/medium/high/max; "" = Claude default).
   KIBITZ_DRIVER           Active driver: auto, none, codex, claude, antigravity/agy.
   KIBITZ_QUOTA_CHECK      Set to 0/false/no to skip non-prompt quota preflight checks.
   KIBITZ_QUOTA_WARN_THRESHOLDS
@@ -135,8 +136,20 @@ CODEX_MODEL_PREFERENCE = ("gpt-5.5", "gpt-5-codex", "gpt-5")
 # Codex, collapsing the panel's whole value.
 AGY_MODEL = os.environ.get("KIBITZ_AGY_MODEL", "gemini-3.5-pro")
 AGY_PRINT_TIMEOUT = os.environ.get("KIBITZ_AGY_PRINT_TIMEOUT", "5m")
-CLAUDE_MODEL = os.environ.get("KIBITZ_CLAUDE_MODEL", "sonnet")
-CLAUDE_EFFORT = os.environ.get("KIBITZ_CLAUDE_EFFORT", "high")
+CLAUDE_BUDGET = os.environ.get("KIBITZ_CLAUDE_BUDGET", "medium").strip().lower()
+CLAUDE_MODEL_ENV = os.environ.get("KIBITZ_CLAUDE_MODEL")
+CLAUDE_EFFORT_ENV = os.environ.get("KIBITZ_CLAUDE_EFFORT")
+CLAUDE_BUDGET_PROFILES = {
+    "low": ("haiku", "medium"),
+    "cheap": ("haiku", "medium"),
+    "medium": ("sonnet", "high"),
+    "med": ("sonnet", "high"),
+    "standard": ("sonnet", "high"),
+    "high": ("opus", "max"),
+    "deep": ("opus", "max"),
+    "plan": ("opusplan", "high"),
+    "opusplan": ("opusplan", "high"),
+}
 
 QUOTA_CHECK_ENABLED = os.environ.get("KIBITZ_QUOTA_CHECK", "1").strip().lower() not in (
     "0", "false", "no", "off",
@@ -179,6 +192,19 @@ AGENT_LABELS = {
     "antigravity": "Antigravity",
     "claude": "Claude",
 }
+
+
+def resolve_claude_budget():
+    """Return (budget, model, effort, note) for the Claude reviewer lane."""
+    budget = CLAUDE_BUDGET or "medium"
+    note = ""
+    if budget not in CLAUDE_BUDGET_PROFILES:
+        note = f"unknown KIBITZ_CLAUDE_BUDGET={budget!r}; using medium"
+        budget = "medium"
+    profile_model, profile_effort = CLAUDE_BUDGET_PROFILES[budget]
+    model = CLAUDE_MODEL_ENV if CLAUDE_MODEL_ENV is not None else profile_model
+    effort = CLAUDE_EFFORT_ENV if CLAUDE_EFFORT_ENV is not None else profile_effort
+    return budget, model, effort, note
 
 
 def pick_codex_model(exe: str, repo: Path, run_dir: Path):
@@ -801,6 +827,7 @@ def run_claude(prompt: str, repo: Path, out_file: Path, log_file: Path) -> bool:
     if out_file.exists():
         out_file.unlink()
     full = prompt + FILE_OUTPUT_DIRECTIVE.format(out_path=str(out_file))
+    claude_budget, claude_model, claude_effort, claude_budget_note = resolve_claude_budget()
     cmd = [
         exe,
         "-p",
@@ -810,16 +837,27 @@ def run_claude(prompt: str, repo: Path, out_file: Path, log_file: Path) -> bool:
         "--tools", "Read,Glob,Grep,Write",
         "--add-dir", str(repo),
     ]
-    if CLAUDE_MODEL:
-        cmd += ["--model", CLAUDE_MODEL]
-    if CLAUDE_EFFORT:
-        cmd += ["--effort", CLAUDE_EFFORT]
+    if claude_model:
+        cmd += ["--model", claude_model]
+    if claude_effort:
+        cmd += ["--effort", claude_effort]
     cmd.append(full)
+    (out_file.parent / "claude_budget_selected.txt").write_text(
+        "\n".join([
+            f"budget={claude_budget}",
+            f"model={claude_model or '(claude default)'}",
+            f"effort={claude_effort or '(claude default)'}",
+            f"note={claude_budget_note or '(none)'}",
+        ]) + "\n",
+        encoding="utf-8",
+    )
     (out_file.parent / "claude_model_selected.txt").write_text(
-        CLAUDE_MODEL or "(claude default)", encoding="utf-8")
+        claude_model or "(claude default)", encoding="utf-8")
     (out_file.parent / "claude_effort_selected.txt").write_text(
-        CLAUDE_EFFORT or "(claude default)", encoding="utf-8")
-    print(f"  -> claude: model={CLAUDE_MODEL or 'default'} effort={CLAUDE_EFFORT or 'default'} file-handoff -> {out_file.name}")
+        claude_effort or "(claude default)", encoding="utf-8")
+    if claude_budget_note:
+        print(f"  [WARN] claude: {claude_budget_note}")
+    print(f"  -> claude: budget={claude_budget} model={claude_model or 'default'} effort={claude_effort or 'default'} file-handoff -> {out_file.name}")
     started_at = time.time()
     try:
         proc = subprocess.run(cmd, stdin=subprocess.DEVNULL, cwd=str(repo),
