@@ -21,6 +21,8 @@ ROOT = Path(__file__).resolve().parent.parent
 
 REQUIRED_FILES = [
     "SKILL.md",
+    "agents/openai.yaml",
+    "scripts/build_skill_bundle.py",
     "scripts/kibitz.py",
     "scripts/comfyui_profile.py",
     "COMPAT.md",
@@ -45,7 +47,11 @@ def check_tree() -> list[str]:
 
 def check_parse() -> Optional[str]:
     """AST-parse Python entry points. Return an error string on failure, else None."""
-    for rel in ("scripts/kibitz.py", "scripts/comfyui_profile.py"):
+    for rel in (
+        "scripts/build_skill_bundle.py",
+        "scripts/kibitz.py",
+        "scripts/comfyui_profile.py",
+    ):
         target = ROOT / rel
         if not target.is_file():
             return f"{rel} is missing"
@@ -78,6 +84,7 @@ def main() -> int:
     print("\n[2] Python entrypoint parse")
     parse_err = check_parse()
     if parse_err is None:
+        print("    ok      scripts/build_skill_bundle.py is valid Python")
         print("    ok      scripts/kibitz.py is valid Python")
         print("    ok      scripts/comfyui_profile.py is valid Python")
     else:

@@ -118,8 +118,8 @@ agy --model <model> --dangerously-skip-permissions --print-timeout 5m \
   timeout.
 - That write requires `--dangerously-skip-permissions` (agy is otherwise
   interactive about file writes). This makes `agy` **UNSANDBOXED**: it is gated
-  only by the strict review-only prompt directive. See SAFETY in `README.md` -
-  run untrusted prompts in a throwaway git worktree.
+  only by the strict review-only prompt directive. See **Safety posture** in
+  `SKILL.md`; run untrusted prompts in a throwaway git worktree.
 
 ### Antigravity model policy
 
