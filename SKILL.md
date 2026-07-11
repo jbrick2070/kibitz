@@ -1,22 +1,16 @@
 ---
 name: kibitz
 description: >-
-  Kibitz gets you a second opinion on a plan, sprint plan, spec, or architecture
-  doc from local file-reading CLI agents: Codex (`codex exec`), Antigravity
-  (`agy -p`), and Claude Code (`claude -p`). Kibitz is multi-system aware: the
-  active driver (Claude, Codex, or Antigravity) writes the anchor review and is
-  excluded from the default external reviewer set, while the remaining local
-  agents crawl your REAL repo and return independent reviews. The driver grounds
-  the agents' claims against the actual code, discards hallucinations, and folds
-  only the survivors into one improved plan across a fixed 4-round arc (r1 arc
-  -> r2 coding -> r3 wiring -> r4 convergence). Fully hands-off, designed for
-  Claude Cowork, Codex, and Antigravity on Windows; ships with an opt-in ComfyUI
-  custom-node profile plus a repo-local ComfyUI profile generator.
-  Use when the user wants a second opinion / to pressure-test / harden /
-  "round-robin" / "make bulletproof" a doc with their LOCAL agents, or says
-  "kibitz", "/kibitz", "kibitz this", "get a second opinion", "run the local
-  panel", "include Claude", or "use Codex, Claude, and Antigravity to review
-  this".
+  Harden plans, sprint plans, specs, and architecture docs with independent
+  local file-reading reviews from Codex, Antigravity, and Claude Code. The
+  active UI driver writes a code-grounded anchor, excludes its own duplicate CLI
+  lane, verifies every reviewer claim against the real repo, and acts as sole
+  judge. Use the default four-round arc for new campaigns or auditable
+  continuation/scoped-tail receipts when explicitly requested. Includes
+  optional ComfyUI and repo-local profiles. Use when the user says kibitz,
+  /kibitz, second opinion, pressure-test, harden, round-robin, make bulletproof,
+  run the local panel, or asks to include local Codex, Antigravity, or Claude
+  reviewers.
 ---
 
 # Kibitz
@@ -24,8 +18,9 @@ description: >-
 Harden a document by (1) having the active driver write its own code-grounded
 anchor review, then (2) fanning the document out to LOCAL file-reading CLI
 agents for independent critique, then (3) verifying every claim against the
-real code and folding only what survives into an improved plan. Fixed 4-round
-arc; run all four.
+real code and folding only what survives into an improved plan. A new campaign
+runs the full 4-round arc by default; explicit resumptions and user-scoped
+contiguous round ranges are supported with receipts.
 
 The default panel is **driver-aware**:
 
@@ -90,7 +85,8 @@ disposes.
 
 ## The 4-round arc
 
-Each round has a different focus. Run all four; do not exit early.
+Each round has a different focus. Run all four for a new campaign; do not
+silently skip a round.
 
 | Round | Focus | Round prompt |
 |-------|-------|--------------|
@@ -99,10 +95,34 @@ Each round has a different focus. Run all four; do not exit early.
 | r3 | Wiring / integration / sequencing | `references/review-prompt-r3.md` |
 | r4 | Convergence / residual defects | `references/review-prompt-r4.md` |
 
-After r4, deliver the final hardened plan and report the agent calls made
-(8 external calls across the normal driver-aware arc: two reviewer agents x four
-rounds; 12 calls if `--driver none` or `--all-agents` runs all three external
-agents).
+### Continuation and explicitly scoped tails
+
+The full arc is the default, not a reason to ignore an explicit user request.
+When the user asks to resume or names a contiguous range such as `r3 -> r4`:
+
+- **Resume with prior artifacts:** verify the immediate predecessor's
+  `input.md`, `driver_anchor.md`, reviewer files, `judgment.md`, and `final.md`.
+  Record their paths and SHA-256 values in `resume_receipt.md`, and use that
+  predecessor `final.md` as the resumed round's exact input. If the chain is
+  missing or ambiguous, restart at the earliest missing round unless the user
+  explicitly requests a partial campaign.
+- **Explicit partial campaign:** when earlier Kibitz artifacts do not exist but
+  the user deliberately requests only a contiguous tail, write
+  `scope_receipt.md` before fan-out. Record the requested range, input path and
+  SHA-256, driver, reviewer lanes, and every round not run. Never describe that
+  campaign as a completed four-round arc.
+- Run every selected round sequentially through the requested endpoint. Write a
+  fresh `driver_anchor.md` before each fan-out, ground every new claim, and feed
+  each round's `final.md` into the next. Never report an omitted round as
+  executed.
+
+The standard per-round driver artifacts are `driver_anchor.md`, `judgment.md`,
+and `final.md`, alongside `input.md` and the reviewer files.
+
+After r4, deliver the final hardened plan and report the **actual** agent calls
+made. A normal driver-aware full arc makes 8 external calls (two reviewer agents
+x four rounds); `--driver none` or `--all-agents` makes 12. A scoped campaign
+reports its smaller real count and names the rounds not run.
 
 **Domain profiles (optional).** The four round prompts are deliberately
 general. When the target is a specialized codebase, use the matching profile so
@@ -125,7 +145,7 @@ overlay exists. Use `--profile comfyui` to force the generic profile without a
 local overlay, or `--no-profiles` to disable profiles for a run. Add your own
 profiles the same way via `--profile path/to/profile.md`.
 
-## The loop (steps 1-6 repeat for each of the 4 rounds)
+## The loop (steps 1-6 repeat for each selected round)
 
 Do not skip the driver anchor or the grounding step.
 
@@ -159,9 +179,10 @@ Do not skip the driver anchor or the grounding step.
    `r<N>_plan.md` if advancing). Keep a short judgment note (accepted /
    rejected-with-reason / verify-at-build items).
 
-6. **Advance.** Feed the updated plan into the next round (r1 -> r2 -> r3 -> r4)
-   using that round's prompt. Do not skip rounds. After r4, deliver the final
-   hardened plan and the judgment log.
+6. **Advance.** Feed the updated plan into the next selected round (normally
+   r1 -> r2 -> r3 -> r4) using that round's prompt. For a continuation or
+   explicit partial campaign, obey the receipt and remain sequential within the
+   selected range. After r4, deliver the final hardened plan and judgment log.
 
 ## Calling the fan-out script
 
@@ -197,7 +218,11 @@ python scripts/kibitz.py \
 
 - `--repo` defaults to the current directory, so if you run from the repo root
   you can omit it.
-- `--round {r1,r2,r3,r4}` picks the round prompt. Run all four across the arc.
+- `--doc <path>` validates UTF-8 for the reviewer prompt and copies the source
+  bytes exactly to `input.md`; never normalize line endings in a resume chain.
+- `--round {r1,r2,r3,r4}` picks one round prompt. Run all four for a new
+  campaign; explicit resumptions and scoped tails follow the receipt rules
+  above.
 - `--profile comfyui` appends the shipped generic ComfyUI profile. `--profile
   path/to/profile.md` appends a custom profile. Repeat as needed.
 - `.kibitz/comfyui.local.md` in the target repo is auto-detected; when present,
@@ -307,7 +332,9 @@ python scripts/comfyui_profile.py --repo . --comfyui-root /workspace/ComfyUI --m
   429`, `check quota`, `Individual quota reached`) and annotates the failed
   review file only when those markers exist. A plain `timeout waiting for
   response` remains an `agy` timeout/print-mode failure.
-- **4 rounds is the arc.** Do not add passes beyond r4 unless the user asks.
+- **4 rounds is the default arc.** Do not add passes beyond r4 unless the user
+  asks. Do not inflate an explicit scoped campaign into work the user did not
+  request, and do not claim omitted rounds ran.
 
 ## Conventions
 

@@ -112,16 +112,25 @@ def write_stub_launchers(fake_bin: Path) -> None:
             launcher.chmod(launcher.stat().st_mode | stat.S_IEXEC)
 
 
-def run_kibitz(repo: Path, plan: Path, env: dict[str, str], topic: str, *agents: str) -> subprocess.CompletedProcess[str]:
+def run_kibitz(
+    repo: Path,
+    plan: Path,
+    env: dict[str, str],
+    topic: str,
+    *agents: str,
+    round_id: str = "r1",
+) -> subprocess.CompletedProcess[str]:
     run_env = env.copy()
-    run_env["KIBITZ_STUB_AGY_OUT"] = str(run_dir(repo, topic) / "antigravity.md")
+    run_env["KIBITZ_STUB_AGY_OUT"] = str(
+        run_dir(repo, topic, round_id) / "antigravity.md"
+    )
     cmd = [
         sys.executable,
         str(KIBITZ),
         "--doc",
         str(plan),
         "--round",
-        "r1",
+        round_id,
         "--topic",
         topic,
         "--repo",
@@ -145,8 +154,13 @@ def run_kibitz(repo: Path, plan: Path, env: dict[str, str], topic: str, *agents:
     )
 
 
-def run_dir(repo: Path, topic: str) -> Path:
-    return repo / "kibitz-runs" / f"{datetime.date.today().isoformat()}-{topic}" / "r1"
+def run_dir(repo: Path, topic: str, round_id: str = "r1") -> Path:
+    return (
+        repo
+        / "kibitz-runs"
+        / f"{datetime.date.today().isoformat()}-{topic}"
+        / round_id
+    )
 
 
 def assert_contains(path: Path, expected: str, context: subprocess.CompletedProcess[str] | None = None) -> None:
@@ -252,6 +266,55 @@ def main() -> int:
         assert_contains(budget_dir / "claude_budget_selected.txt", "budget=high", budget)
         assert_contains(budget_dir / "claude_budget_selected.txt", "model=opus", budget)
         assert_contains(budget_dir / "claude_budget_selected.txt", "effort=max", budget)
+
+        resume_topic = "stub-resume"
+        prior_dir = run_dir(repo, resume_topic, "r2")
+        prior_dir.mkdir(parents=True)
+        prior_input = prior_dir / "input.md"
+        prior_input.write_text("R2 input.\n", encoding="utf-8")
+        (prior_dir / "driver_anchor.md").write_text(
+            "R2 driver anchor.\n", encoding="utf-8"
+        )
+        (prior_dir / "antigravity.md").write_text(
+            "R2 Antigravity review.\n", encoding="utf-8"
+        )
+        (prior_dir / "claude.md").write_text(
+            "R2 Claude review.\n", encoding="utf-8"
+        )
+        (prior_dir / "judgment.md").write_text(
+            "R2 judgment.\n", encoding="utf-8"
+        )
+        prior_final = prior_dir / "final.md"
+        # Deliberately use LF bytes. The historical text-mode implementation
+        # rewrote these to CRLF on Windows and violated resume hash identity.
+        prior_final.write_bytes(b"R2 hardened final.\n")
+
+        resumed = run_kibitz(
+            repo,
+            prior_final,
+            env,
+            resume_topic,
+            "claude",
+            round_id="r3",
+        )
+        if resumed.returncode != 0:
+            raise AssertionError(textwrap.dedent(f"""\
+                expected successful r2 -> r3 continuation pass
+                stdout:
+                {resumed.stdout}
+                stderr:
+                {resumed.stderr}
+            """))
+        resumed_dir = run_dir(repo, resume_topic, "r3")
+        if (resumed_dir / "input.md").read_bytes() != prior_final.read_bytes():
+            raise AssertionError("resumed r3 input is not byte-identical to r2 final")
+        assert_contains(resumed_dir / "claude.md", "CLAUDE STDOUT REVIEW", resumed)
+        if "Round:      r3" not in resumed.stdout:
+            raise AssertionError("resumed run did not report r3")
+        if "Write your own code-grounded anchor review" in resumed.stdout:
+            raise AssertionError("post-run instructions still place the anchor after fan-out")
+        if "driver anchor was written before this fan-out" not in resumed.stdout:
+            raise AssertionError("post-run instructions do not preserve anchor-before-fan-out")
 
         empty_env = env.copy()
         empty_env["KIBITZ_STUB_AGY_MODE"] = "empty"

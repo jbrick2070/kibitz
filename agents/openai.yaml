@@ -1,0 +1,4 @@
+interface:
+  display_name: "Kibitz"
+  short_description: "Ground plans with independent local agent reviews"
+  default_prompt: "Use $kibitz to harden this plan with code-grounded local reviewers."

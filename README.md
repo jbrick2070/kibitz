@@ -69,6 +69,10 @@ skill** -- the whole skill (script, round prompts, ComfyUI profile) installs
 together in one click. You'll still need the three CLIs signed in (steps 2-4 of
 the prompt above).
 
+Maintainers rebuild and byte-verify that bundle with
+`python scripts/build_skill_bundle.py`; its explicit allowlist keeps development
+tests and repository-only documentation out of the installed skill.
+
 ## Prefer to do it by hand? Manual install
 
 If you would rather drive it yourself, here are the same steps as plain commands.
@@ -280,7 +284,7 @@ a fake native auto-router: set `KIBITZ_CLAUDE_BUDGET=low`, `medium`, `high`, or
 ## How to use it day to day
 
 Point your active host at a plan, spec, or design doc and say "run kibitz on this." Kibitz
-then walks a fixed **4-round arc**, each round with a different lens:
+then walks a **4-round arc** by default, each round with a different lens:
 
 | Round | What it looks at |
 |-------|------------------|
@@ -288,6 +292,14 @@ then walks a fixed **4-round arc**, each round with a different lens:
 | r2 | The coding plan - is it actually buildable? |
 | r3 | The wiring - do the pieces connect and sequence correctly? |
 | r4 | Final pass - anything still broken? |
+
+You can also explicitly resume a prior campaign or request a contiguous tail
+such as `r3 -> r4`. Kibitz keeps that honest: a real resume verifies and hashes
+the predecessor artifacts before using the prior `final.md`; a partial campaign
+writes a scope receipt naming its input and the rounds that were not run. Every
+selected round still gets a fresh driver anchor before fan-out, grounding, a
+judgment, and a final plan. A partial run is never presented as a full four-round
+campaign.
 
 In every round, the driver writes the anchor review, the external reviewer agents
 read your real code and write their own reviews, and then **the active driver is

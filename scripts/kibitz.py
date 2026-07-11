@@ -969,8 +969,14 @@ def main() -> None:
     repo = args.repo.resolve()
     if not repo.is_dir():
         sys.exit(f"ERROR: --repo is not a directory: {repo}")
+    input_bytes = None
     if args.doc:
-        input_text = Path(args.doc).read_text(encoding="utf-8")
+        doc_path = Path(args.doc)
+        input_bytes = doc_path.read_bytes()
+        try:
+            input_text = input_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            sys.exit(f"ERROR: --doc must be UTF-8 text: {doc_path} ({exc})")
     elif args.problem:
         input_text = args.problem
     else:
@@ -1005,7 +1011,14 @@ def main() -> None:
     run_dir = repo / "kibitz-runs" / f"{date}-{args.topic}" / args.round
     run_dir.mkdir(parents=True, exist_ok=True)
     input_path = run_dir / "input.md"
-    input_path.write_text(input_text, encoding="utf-8")
+    if input_bytes is not None:
+        # A continuation receipt hashes the predecessor final.md. Preserve that
+        # exact byte stream in input.md; text-mode writes normalize LF/CRLF on
+        # Windows and would make an honest resume hash impossible.
+        input_path.write_bytes(input_bytes)
+    else:
+        with input_path.open("w", encoding="utf-8", newline="\n") as handle:
+            handle.write(input_text)
 
     profile_entries, profile_text = load_profiles(repo, args.profile, args.no_profiles)
     profiles_used = "\n".join(f"{label}: {path}" for label, path in profile_entries) or "(none)"
@@ -1035,10 +1048,10 @@ def main() -> None:
     for name, ok in results.items():
         print(f"  {name}: {'OK' if ok else 'FAILED - check the .log'}")
     print("\nNext (the driver, NOT the script):")
-    print(f"  1. Write your own code-grounded anchor review of {input_path.name}.")
+    print("  1. Confirm the driver anchor was written before this fan-out; preserve it as driver_anchor.md.")
     print("  2. Verify every claim in the agent reviews against the real code; discard misreads.")
-    print(f"  3. Merge the survivors into {run_dir / 'final.md'}.")
-    print("  4. For the full arc, advance r1 -> r2 -> r3 -> r4.")
+    print(f"  3. Record the judgment and merge survivors into {run_dir / 'final.md'}.")
+    print("  4. Advance sequentially within the full arc or the explicit scoped/resume receipt.")
 
     if not any(results.values()):
         sys.exit(1)
