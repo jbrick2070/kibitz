@@ -76,6 +76,8 @@ codex exec -C <repo> --sandbox read-only --json --color never \
 - **Reasoning:** default `model_reasoning_effort="high"`. `xhigh` is reserved
   for deep review and is model-dependent; if an `xhigh` run fails, the script
   retries once with `high`. Override via `KIBITZ_CODEX_REASONING`.
+- **Model pin:** set `KIBITZ_CODEX_MODEL` (e.g. `gpt-5.6-sol`) to bypass auto-pick
+  entirely; empty/unset = auto-pick below.
 - **Model:** poll the live catalog with `codex debug models` (JSON), then pick
   the strongest non-mini model, preferring in order: `gpt-5.5`, then
   `gpt-5-codex`, then `gpt-5`; otherwise the highest `gpt-5*` slug. Models tagged

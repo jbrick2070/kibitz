@@ -46,6 +46,7 @@ Usage:
 
 Configuration is via CLI args and environment variables only -- no hardcoded paths.
   KIBITZ_CODEX_REASONING  Codex reasoning effort (default "high"; "xhigh" retries to "high").
+  KIBITZ_CODEX_MODEL      Codex model slug pin (e.g. "gpt-5.6-sol"; "" = auto-pick strongest).
   KIBITZ_AGY_MODEL        Antigravity model slug (default "gemini-3.5-pro"; "" = agy default).
   KIBITZ_CLAUDE_BUDGET    Claude spend tier: low, medium, high, or plan (default "medium").
   KIBITZ_CLAUDE_MODEL     Claude model alias/slug override ("" = Claude default).
@@ -125,6 +126,8 @@ def _which(name: str, *extra_dirs: str):
 # strongest non-mini model, default reasoning_effort="high". xhigh is model-dependent -> try
 # only if asked, retry once with high on failure. See COMPAT.md.
 CODEX_REASONING = os.environ.get("KIBITZ_CODEX_REASONING", "high")
+# Explicit model pin wins over auto-pick; "" (default) = poll catalog + preference order.
+CODEX_MODEL_ENV = os.environ.get("KIBITZ_CODEX_MODEL", "").strip()
 CODEX_MODEL_PREFERENCE = ("gpt-5.5", "gpt-5-codex", "gpt-5")
 # Antigravity has NO reasoning flag -- reasoning rides the model slug's -high/-low suffix
 # (e.g. gemini-3.1-pro-high). Default to a strong pro model (gemini-3.5-pro); set
@@ -723,7 +726,7 @@ def run_codex(prompt: str, repo: Path, out_file: Path, log_file: Path) -> bool:
         return False
     if out_file.exists():
         out_file.unlink()
-    model = pick_codex_model(exe, repo, run_dir)
+    model = CODEX_MODEL_ENV or pick_codex_model(exe, repo, run_dir)
     (run_dir / "codex_model_selected.txt").write_text(model or "(codex default)", encoding="utf-8")
     (run_dir / "codex_reasoning_selected.txt").write_text(CODEX_REASONING, encoding="utf-8")
 
