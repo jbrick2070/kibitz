@@ -40,6 +40,12 @@ a second reviewer from the base OS. In Antigravity UI, use `--driver agy` (or
 not through an `agy` subprocess. Avoid `--all-agents` / `--only agy` in that
 context unless you are intentionally testing the CLI outside the UI.
 
+The active host supplies its own native model reasoning and is not inspected or
+re-launched as a reviewer. The `gpt-5.6-*` picker applies only when a different
+host launches the external Codex CLI lane: Claude driving may launch Codex CLI;
+Codex driving must not launch Codex CLI; Antigravity driving must not launch
+the `agy` CLI.
+
 > **Exact CLI flags, model-selection policy, and the versions this was proven
 > on live in [`COMPAT.md`](COMPAT.md).** They move fast; keep them out of your
 > head and check that file when a flag stops working. This SKILL.md is the
@@ -231,9 +237,10 @@ python scripts/kibitz.py \
 - `--driver {auto,none,codex,claude,antigravity,agy}` selects the active driver.
   `auto` honors `KIBITZ_DRIVER` and known host environment hints. `none` means
   standalone/full external panel.
-- `--all-agents` runs Codex + Antigravity + Claude Code regardless of driver.
+- `--all-agents` runs all external agents while still excluding the active driver.
 - `--only codex`, `--only antigravity`/`--only agy`, or `--only claude` runs
-  selected agents (repeatable) and overrides the driver-aware default.
+  selected agents (repeatable), except that the active driver is always excluded.
+  Use `--driver none --only <agent>` only for an intentional standalone CLI test.
 - `--dry-run` prints the detected/selected driver and reviewer agents without
   calling any agents; use it to confirm host detection without spending prompts.
 - If `agy` is out of quota, use `--only claude` or repeat

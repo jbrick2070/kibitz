@@ -135,6 +135,8 @@ def run_kibitz(
         topic,
         "--repo",
         str(repo),
+        "--driver",
+        "none",
         "--no-profiles",
         "--timeout",
         "20",
