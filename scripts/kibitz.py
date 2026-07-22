@@ -47,7 +47,7 @@ Usage:
 Configuration is via CLI args and environment variables only -- no hardcoded paths.
   KIBITZ_CODEX_REASONING  Codex reasoning effort (default "high"; "xhigh" retries to "high").
   KIBITZ_CODEX_MODEL      Codex model slug pin (e.g. "gpt-5.6-sol"; "" = auto-pick strongest).
-  KIBITZ_AGY_MODEL        Antigravity model slug (default "gemini-3.5-pro"; "" = agy default).
+  KIBITZ_AGY_MODEL        Antigravity CLI slug (default "gemini-3.6-flash-high"; "" = agy default).
   KIBITZ_CLAUDE_BUDGET    Claude spend tier: low, medium, high, or plan (default "medium").
   KIBITZ_CLAUDE_MODEL     Claude model alias/slug override ("" = Claude default).
   KIBITZ_CLAUDE_EFFORT    Claude effort override (low/medium/high/max; "" = Claude default).
@@ -127,17 +127,26 @@ def _which(name: str, *extra_dirs: str):
 # only if asked, retry once with high on failure. See COMPAT.md.
 CODEX_REASONING = os.environ.get("KIBITZ_CODEX_REASONING", "high")
 # Explicit model pin wins over auto-pick; "" (default) = poll catalog + preference order.
-CODEX_MODEL_ENV = os.environ.get("KIBITZ_CODEX_MODEL", "").strip()
-CODEX_MODEL_PREFERENCE = ("gpt-5.5", "gpt-5-codex", "gpt-5")
-# Antigravity has NO reasoning flag -- reasoning rides the model slug's -high/-low suffix
-# (e.g. gemini-3.1-pro-high). Default to a strong pro model (gemini-3.5-pro); set
-# KIBITZ_AGY_MODEL=gemini-3.1-pro-high for max reasoning, or "" to use agy's own default.
+CODEX_MODEL_REQUEST = os.environ.get("KIBITZ_CODEX_MODEL", "").strip() or None
+# Keep private/rollout names as live-catalog preferences only. They are never
+# passed to Codex unless `codex debug models` confirms the exact slug exists.
+CODEX_MODEL_PREFERENCE = (
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "gpt-5.5",
+    "gpt-5-codex",
+    "gpt-5",
+)
+# Antigravity has no separate reasoning flag -- reasoning rides the model slug's
+# -high/-low suffix (e.g. "gemini-3.6-flash-high"). AgY 1.1.5 exposes
+# lowercase hyphenated CLI slugs via `agy models`.
 # DIVERSITY RULE (do NOT casually change): agy is MULTI-MODEL -- it can run Gemini AND
 # claude-opus / claude-sonnet / gpt-oss. Keep agy on GEMINI: Codex is GPT-family
 # and Claude Code can supply the Claude-family lane, so agy=Gemini gives three
 # DISTINCT model families; agy=Opus duplicates Claude and agy=gpt-oss duplicates
 # Codex, collapsing the panel's whole value.
-AGY_MODEL = os.environ.get("KIBITZ_AGY_MODEL", "gemini-3.5-pro")
+AGY_MODEL = os.environ.get("KIBITZ_AGY_MODEL", "gemini-3.6-flash-high")
 AGY_PRINT_TIMEOUT = os.environ.get("KIBITZ_AGY_PRINT_TIMEOUT", "5m")
 CLAUDE_BUDGET = os.environ.get("KIBITZ_CLAUDE_BUDGET", "medium").strip().lower()
 CLAUDE_MODEL_ENV = os.environ.get("KIBITZ_CLAUDE_MODEL")
@@ -212,14 +221,26 @@ def resolve_claude_budget():
 
 def pick_codex_model(exe: str, repo: Path, run_dir: Path):
     """Poll `codex debug models`, log it, pick the strongest non-mini model. Returns a slug or
-    None (let Codex use its default). Never picks mini/fast/spark unless nothing else exists."""
+    None (let Codex use its default). Never picks mini/fast/spark unless nothing else exists.
+
+    An explicit KIBITZ_CODEX_MODEL is accepted only when the live catalog lists
+    that exact slug. This prevents stale/private model names from causing an
+    avoidable invalid-model failure.
+    """
     import json as _json
+    resolution_file = run_dir / "codex_model_resolution.txt"
     try:
         raw = (subprocess.run([exe, "debug", "models"], cwd=str(repo), stdin=subprocess.DEVNULL,
                               capture_output=True, text=True, encoding="utf-8",
                               errors="replace", timeout=120).stdout
                or "")
     except Exception:  # noqa: BLE001
+        resolution_file.write_text(
+            "catalog=unavailable\n"
+            f"requested={CODEX_MODEL_REQUEST or '(none)'}\n"
+            "selected=(codex default)\n",
+            encoding="utf-8",
+        )
         return None
     (run_dir / "codex_models.json").write_text(raw, encoding="utf-8")
     slugs = []
@@ -230,11 +251,45 @@ def pick_codex_model(exe: str, repo: Path, run_dir: Path):
                 slugs.append(s)
     except Exception:  # noqa: BLE001
         slugs = []
+    if CODEX_MODEL_REQUEST:
+        if CODEX_MODEL_REQUEST in slugs:
+            resolution_file.write_text(
+                "catalog=available\n"
+                f"requested={CODEX_MODEL_REQUEST}\n"
+                f"selected={CODEX_MODEL_REQUEST}\n",
+                encoding="utf-8",
+            )
+            return CODEX_MODEL_REQUEST
+        resolution_file.write_text(
+            "catalog=available\n"
+            f"requested={CODEX_MODEL_REQUEST}\n"
+            "selected=(automatic catalog preference)\n"
+            "reason=requested slug is absent from the live catalog\n"
+            f"available={','.join(slugs) or '(none)'}\n",
+            encoding="utf-8",
+        )
+        print(
+            f"  [WARN] codex: requested model {CODEX_MODEL_REQUEST!r} is not in the live catalog; "
+            "using an available catalog model"
+        )
     for pref in CODEX_MODEL_PREFERENCE:
         if pref in slugs:
+            resolution_file.write_text(
+                "catalog=available\n"
+                f"requested={CODEX_MODEL_REQUEST or '(none)'}\n"
+                f"selected={pref}\n",
+                encoding="utf-8",
+            )
             return pref
     g5 = sorted((s for s in slugs if s.startswith("gpt-5")), reverse=True)
-    return g5[0] if g5 else None
+    selected = g5[0] if g5 else None
+    resolution_file.write_text(
+        "catalog=available\n"
+        f"requested={CODEX_MODEL_REQUEST or '(none)'}\n"
+        f"selected={selected or '(codex default)'}\n",
+        encoding="utf-8",
+    )
+    return selected
 
 
 GROUNDING_FOOTER = """
@@ -726,7 +781,7 @@ def run_codex(prompt: str, repo: Path, out_file: Path, log_file: Path) -> bool:
         return False
     if out_file.exists():
         out_file.unlink()
-    model = CODEX_MODEL_ENV or pick_codex_model(exe, repo, run_dir)
+    model = pick_codex_model(exe, repo, run_dir)
     (run_dir / "codex_model_selected.txt").write_text(model or "(codex default)", encoding="utf-8")
     (run_dir / "codex_reasoning_selected.txt").write_text(CODEX_REASONING, encoding="utf-8")
 
@@ -957,7 +1012,7 @@ def main() -> None:
                     metavar="{auto,none,codex,claude,antigravity,agy}",
                     help="active driver to exclude from default reviewers. Default: auto.")
     ap.add_argument("--all-agents", action="store_true",
-                    help="run codex + antigravity + claude, ignoring detected driver.")
+                    help="run all external agents; the active driver is still excluded.")
     ap.add_argument("--with-claude", action="store_true",
                     help="compatibility flag: include Claude even if the driver-aware default excludes it.")
     ap.add_argument("--dry-run", action="store_true",
@@ -1002,13 +1057,26 @@ def main() -> None:
                          f"(choose codex, antigravity/agy, or claude)")
             if name not in selected:
                 selected.append(name)
+        if driver and driver in selected:
+            selected.remove(driver)
+            print(
+                f"[WARN] {driver} is the active driver; its own CLI lane is excluded. "
+                "Use --driver none --only " + driver + " only for an intentional standalone CLI test."
+            )
     elif args.all_agents:
-        selected = list(DEFAULT_RUNNERS)
+        selected = [name for name in DEFAULT_RUNNERS if name != driver]
     else:
         selected = [name for name in DEFAULT_RUNNERS if name != driver]
     if args.with_claude and "claude" not in selected:
-        selected.append("claude")
+        if driver != "claude":
+            selected.append("claude")
     if not selected:
+        if driver:
+            ap.error(
+                f"no external reviewers selected; active driver {driver!r} is not launched "
+                "as its own CLI. Choose another --only agent, or use --driver none for a "
+                "standalone CLI test."
+            )
         selected = list(DEFAULT_RUNNERS)
     date = datetime.date.today().isoformat()
     run_dir = repo / "kibitz-runs" / f"{date}-{args.topic}" / args.round

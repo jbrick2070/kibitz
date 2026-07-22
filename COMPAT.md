@@ -14,7 +14,7 @@ CLI flags, the model-selection policy, and the tool versions this was proven on.
 | Tool | Version proven | Notes |
 |------|----------------|-------|
 | Codex CLI (`codex`) | `0.142.5`, running model `gpt-5.5` | `codex exec` non-interactive mode |
-| Antigravity (`agy`) | `1.0.16` | no `--headless`, no `--approve`; `agy models` is available for preflight |
+| Antigravity (`agy`) | `1.1.5` | no `--headless`, no `--approve`; `agy models` is available for preflight |
 | Claude Code (`claude`) | `2.1.72` | `claude -p` non-interactive mode |
 | GitHub CLI (`gh`) | `2.89` | optional; only if you script repo setup |
 
@@ -101,12 +101,12 @@ agy --model <model> --dangerously-skip-permissions --print-timeout 5m \
 ```
 
 - `agy` has **no** read-only-that-still-writes sandbox, **no** `--headless`,
-  and **no** `--approve` (verified on agy 1.0.16). Do not invoke those - they
+  and **no** `--approve` (verified on agy 1.1.5). Do not invoke those - they
   do not exist on this version.
 - Because `agy -p` swallows stdout when redirected, the review is delivered by
   **file-handoff**: the prompt instructs `agy` to WRITE its complete review to a
   specific output file with its own write tool, then stop.
-- On agy 1.0.16, captured subprocess launches have two known failure modes:
+- On agy 1.1.5, captured subprocess launches have two known failure modes:
   inherited stdin can hang startup (#508), and captured stdout can be empty even
   with rc=0 (#76/#408). Kibitz closes stdin with `stdin=subprocess.DEVNULL`,
   reads the output file first, and treats rc=0 with no file/stdout text as a
@@ -125,11 +125,17 @@ agy --model <model> --dangerously-skip-permissions --print-timeout 5m \
 
 ### Antigravity model policy
 
-- Default model: **`gemini-3.5-pro`** (override via `KIBITZ_AGY_MODEL`; set to
-  `""` to use agy's own default).
-- `agy` has no separate reasoning flag - reasoning rides the model slug's
-  suffix (e.g. `gemini-3.1-pro-high`). Set `KIBITZ_AGY_MODEL=gemini-3.1-pro-high`
-  for maximum reasoning.
+- Default model: **`gemini-3.6-flash-high`** (shown in the UI as
+  **Gemini 3.6 Flash (High)**; override via `KIBITZ_AGY_MODEL`; set to `""` to
+  use agy's own default).
+- AgY 1.1.5 expects the exact lowercase hyphenated slug printed by
+  `agy models`. Observed valid Gemini slugs include
+  `gemini-3.6-flash-high`, `gemini-3.6-flash-medium`,
+  `gemini-3.6-flash-low`, `gemini-3.5-flash-high`,
+  `gemini-3.5-flash-medium`, `gemini-3.5-flash-low`,
+  `gemini-3.1-pro-high`, and `gemini-3.1-pro-low`.
+- `agy` has no separate reasoning flag; reasoning is encoded in the display-name
+  suffix such as `(High)` or `(Low)`.
 - **Diversity rule (do not casually change):** `agy` is multi-model and can run
   Claude or gpt-oss too. Keep it on **Gemini**. Codex covers GPT-family review
   and Claude Code covers the Claude-family lane when included, so `agy` on
@@ -197,6 +203,12 @@ The script separates the **active driver** from the external reviewer agents.
 The driver writes the anchor review and does synthesis; the script fans out to
 the other systems by default.
 
+The Codex model policy applies only to the external Codex CLI reviewer. When
+Codex is the active driver, Kibitz does not poll the Codex catalog or launch
+another Codex process. When Claude is the active driver, the external Codex CLI
+lane may select `gpt-5.6-sol`, `gpt-5.6-terra`, or `gpt-5.6-luna` from the live
+catalog. When Antigravity is the active driver, its own `agy` CLI is excluded.
+
 ```
 python scripts/kibitz.py --doc plan.md --round r1 --driver auto
 python scripts/kibitz.py --doc plan.md --round r1 --driver codex
@@ -212,8 +224,10 @@ python scripts/kibitz.py --doc plan.md --round r1 --driver none
 - `--driver claude` runs Codex + Antigravity.
 - `--driver agy` / `--driver antigravity` runs Codex + Claude Code.
 - `--driver none` means standalone/full panel and runs all three agents.
-- `--all-agents` also runs all three, ignoring the detected driver.
-- Repeated `--only` flags override driver-aware selection entirely.
+- `--all-agents` runs all external agents while still excluding the active driver.
+- Repeated `--only` flags select external agents, but the active driver remains excluded.
+- To intentionally test the active host's CLI lane, use `--driver none --only <agent>`;
+  this is standalone mode, not a normal driver-aware Kibitz run.
 - `--dry-run` prints the selected driver/reviewer set and exits before any agent
   call.
 
