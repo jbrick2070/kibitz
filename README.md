@@ -153,6 +153,10 @@ If that prints `Python 3.9` or higher, you are set. If not, install Python from
   (On Windows it installs under `%LOCALAPPDATA%\agy\bin`.) Docs:
   [antigravity.google/docs/cli-getting-started](https://antigravity.google/docs/cli-getting-started).
 
+- Current default reviewer model: `gemini-3.6-flash-high`. The latest observed
+  Antigravity model menu and exact `KIBITZ_AGY_MODEL` override slugs live in
+  `COMPAT.md`.
+
 **5. Install Claude Code (Anthropic-family coding agent lane) and sign in.**
 
 - Install Claude Code from Anthropic, then run:
@@ -280,6 +284,11 @@ a fake native auto-router: set `KIBITZ_CLAUDE_BUDGET=low`, `medium`, `high`, or
 `plan`. The default `medium` keeps the existing `sonnet` / `high` behavior;
 `high` opts into `opus` / `max`. Exact mappings live in `COMPAT.md`, and
 `KIBITZ_CLAUDE_MODEL` / `KIBITZ_CLAUDE_EFFORT` still override the tier.
+
+For the Antigravity reviewer lane, Kibitz defaults to `gemini-3.6-flash-high`
+as of the `agy 1.1.5` model menu. Override with `KIBITZ_AGY_MODEL`, or set it
+to `""` to let Antigravity choose its own default. Keep the lane on Gemini for
+model-family diversity unless you are intentionally testing a duplicate family.
 
 ## How to use it day to day
 

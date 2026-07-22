@@ -47,7 +47,7 @@ Usage:
 Configuration is via CLI args and environment variables only -- no hardcoded paths.
   KIBITZ_CODEX_REASONING  Codex reasoning effort (default "high"; "xhigh" retries to "high").
   KIBITZ_CODEX_MODEL      Codex model slug pin (e.g. "gpt-5.6-sol"; "" = auto-pick strongest).
-  KIBITZ_AGY_MODEL        Antigravity model slug (default "gemini-3.5-pro"; "" = agy default).
+  KIBITZ_AGY_MODEL        Antigravity model slug (default "gemini-3.6-flash-high"; "" = agy default).
   KIBITZ_CLAUDE_BUDGET    Claude spend tier: low, medium, high, or plan (default "medium").
   KIBITZ_CLAUDE_MODEL     Claude model alias/slug override ("" = Claude default).
   KIBITZ_CLAUDE_EFFORT    Claude effort override (low/medium/high/max; "" = Claude default).
@@ -129,15 +129,18 @@ CODEX_REASONING = os.environ.get("KIBITZ_CODEX_REASONING", "high")
 # Explicit model pin wins over auto-pick; "" (default) = poll catalog + preference order.
 CODEX_MODEL_ENV = os.environ.get("KIBITZ_CODEX_MODEL", "").strip()
 CODEX_MODEL_PREFERENCE = ("gpt-5.5", "gpt-5-codex", "gpt-5")
-# Antigravity has NO reasoning flag -- reasoning rides the model slug's -high/-low suffix
-# (e.g. gemini-3.1-pro-high). Default to a strong pro model (gemini-3.5-pro); set
-# KIBITZ_AGY_MODEL=gemini-3.1-pro-high for max reasoning, or "" to use agy's own default.
+# Antigravity has NO reasoning flag -- reasoning rides the model slug's -high/-low suffix.
+# agy 1.1.5 "agy models" (verified 2026-07-22) exposes Gemini 3.6 Flash
+# high/medium/low, Gemini 3.5 Flash high/medium/low, Gemini 3.1 Pro high/low,
+# Claude Sonnet/Opus 4.6, and GPT-OSS 120B. Default to the latest high Gemini
+# lane from that menu; set KIBITZ_AGY_MODEL=gemini-3.1-pro-high for the older
+# Pro lane, or "" to use agy's own default.
 # DIVERSITY RULE (do NOT casually change): agy is MULTI-MODEL -- it can run Gemini AND
 # claude-opus / claude-sonnet / gpt-oss. Keep agy on GEMINI: Codex is GPT-family
 # and Claude Code can supply the Claude-family lane, so agy=Gemini gives three
 # DISTINCT model families; agy=Opus duplicates Claude and agy=gpt-oss duplicates
 # Codex, collapsing the panel's whole value.
-AGY_MODEL = os.environ.get("KIBITZ_AGY_MODEL", "gemini-3.5-pro")
+AGY_MODEL = os.environ.get("KIBITZ_AGY_MODEL", "gemini-3.6-flash-high")
 AGY_PRINT_TIMEOUT = os.environ.get("KIBITZ_AGY_PRINT_TIMEOUT", "5m")
 CLAUDE_BUDGET = os.environ.get("KIBITZ_CLAUDE_BUDGET", "medium").strip().lower()
 CLAUDE_MODEL_ENV = os.environ.get("KIBITZ_CLAUDE_MODEL")

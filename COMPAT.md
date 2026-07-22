@@ -14,7 +14,7 @@ CLI flags, the model-selection policy, and the tool versions this was proven on.
 | Tool | Version proven | Notes |
 |------|----------------|-------|
 | Codex CLI (`codex`) | `0.142.5`, running model `gpt-5.5` | `codex exec` non-interactive mode |
-| Antigravity (`agy`) | `1.0.16` | no `--headless`, no `--approve`; `agy models` is available for preflight |
+| Antigravity (`agy`) | `1.0.16`, `1.1.5` | no `--headless`, no `--approve`; `agy models` is available for preflight |
 | Claude Code (`claude`) | `2.1.72` | `claude -p` non-interactive mode |
 | GitHub CLI (`gh`) | `2.89` | optional; only if you script repo setup |
 
@@ -125,11 +125,31 @@ agy --model <model> --dangerously-skip-permissions --print-timeout 5m \
 
 ### Antigravity model policy
 
-- Default model: **`gemini-3.5-pro`** (override via `KIBITZ_AGY_MODEL`; set to
+- Default model: **`gemini-3.6-flash-high`** (override via `KIBITZ_AGY_MODEL`; set to
   `""` to use agy's own default).
 - `agy` has no separate reasoning flag - reasoning rides the model slug's
-  suffix (e.g. `gemini-3.1-pro-high`). Set `KIBITZ_AGY_MODEL=gemini-3.1-pro-high`
-  for maximum reasoning.
+  suffix (e.g. `gemini-3.6-flash-high`, `gemini-3.6-flash-medium`, or
+  `gemini-3.6-flash-low`).
+- Latest observed Antigravity model menu (`agy models`, version `1.1.5`,
+  2026-07-22):
+
+  ```text
+  gemini-3.6-flash-high
+  gemini-3.6-flash-medium
+  gemini-3.6-flash-low
+  gemini-3.5-flash-high
+  gemini-3.5-flash-medium
+  gemini-3.5-flash-low
+  gemini-3.1-pro-high
+  gemini-3.1-pro-low
+  claude-sonnet-4-6
+  claude-opus-4-6-thinking
+  gpt-oss-120b-medium
+  ```
+
+- If you specifically want the older Pro Gemini lane, set
+  `KIBITZ_AGY_MODEL=gemini-3.1-pro-high`.
+
 - **Diversity rule (do not casually change):** `agy` is multi-model and can run
   Claude or gpt-oss too. Keep it on **Gemini**. Codex covers GPT-family review
   and Claude Code covers the Claude-family lane when included, so `agy` on
