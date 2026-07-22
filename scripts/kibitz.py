@@ -47,7 +47,7 @@ Usage:
 Configuration is via CLI args and environment variables only -- no hardcoded paths.
   KIBITZ_CODEX_REASONING  Codex reasoning effort (default "high"; "xhigh" retries to "high").
   KIBITZ_CODEX_MODEL      Codex model slug pin (e.g. "gpt-5.6-sol"; "" = auto-pick strongest).
-  KIBITZ_AGY_MODEL        Antigravity display-name slug (default "Gemini 3.5 Flash (High)"; "" = agy default).
+  KIBITZ_AGY_MODEL        Antigravity CLI slug (default "gemini-3.6-flash-high"; "" = agy default).
   KIBITZ_CLAUDE_BUDGET    Claude spend tier: low, medium, high, or plan (default "medium").
   KIBITZ_CLAUDE_MODEL     Claude model alias/slug override ("" = Claude default).
   KIBITZ_CLAUDE_EFFORT    Claude effort override (low/medium/high/max; "" = Claude default).
@@ -138,14 +138,15 @@ CODEX_MODEL_PREFERENCE = (
     "gpt-5-codex",
     "gpt-5",
 )
-# AgY has no separate reasoning flag and expects display-name slugs with spaces
-# and parentheses, e.g. "Gemini 3.1 Pro (High)".
+# Antigravity has no separate reasoning flag -- reasoning rides the model slug's
+# -high/-low suffix (e.g. "gemini-3.6-flash-high"). AgY 1.1.5 exposes
+# lowercase hyphenated CLI slugs via `agy models`.
 # DIVERSITY RULE (do NOT casually change): agy is MULTI-MODEL -- it can run Gemini AND
 # claude-opus / claude-sonnet / gpt-oss. Keep agy on GEMINI: Codex is GPT-family
 # and Claude Code can supply the Claude-family lane, so agy=Gemini gives three
 # DISTINCT model families; agy=Opus duplicates Claude and agy=gpt-oss duplicates
 # Codex, collapsing the panel's whole value.
-AGY_MODEL = os.environ.get("KIBITZ_AGY_MODEL", "Gemini 3.5 Flash (High)")
+AGY_MODEL = os.environ.get("KIBITZ_AGY_MODEL", "gemini-3.6-flash-high")
 AGY_PRINT_TIMEOUT = os.environ.get("KIBITZ_AGY_PRINT_TIMEOUT", "5m")
 CLAUDE_BUDGET = os.environ.get("KIBITZ_CLAUDE_BUDGET", "medium").strip().lower()
 CLAUDE_MODEL_ENV = os.environ.get("KIBITZ_CLAUDE_MODEL")

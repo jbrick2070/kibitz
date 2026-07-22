@@ -216,6 +216,10 @@ def main() -> int:
 
         env = os.environ.copy()
         env["PATH"] = str(fake_bin) + os.pathsep + env.get("PATH", "")
+        # Keep the regression independent of whichever product UI launches it.
+        # The test explicitly names every stub lane below, so standalone mode is
+        # the deterministic contract.
+        env["KIBITZ_DRIVER"] = "none"
         env["KIBITZ_AGY_MODEL"] = ""
         env["KIBITZ_CLAUDE_MODEL"] = ""
         env["KIBITZ_CLAUDE_EFFORT"] = ""
@@ -249,6 +253,26 @@ def main() -> int:
         assert_contains(first / "antigravity.md", "AGY FILE REVIEW", ok)
         assert_contains(first / "codex_quota_status.txt", "usage_percent=72", ok)
         assert_contains(first / "quota_warnings.md", "Codex usage 72%", ok)
+
+        default_agy_env = env.copy()
+        default_agy_env.pop("KIBITZ_AGY_MODEL", None)
+        default_agy = run_kibitz(
+            repo, plan, default_agy_env, "stub-agy-default", "agy"
+        )
+        if default_agy.returncode != 0:
+            raise AssertionError(textwrap.dedent(f"""\
+                expected successful default-model Antigravity pass
+                stdout:
+                {default_agy.stdout}
+                stderr:
+                {default_agy.stderr}
+            """))
+        default_agy_dir = run_dir(repo, "stub-agy-default")
+        assert_contains(
+            default_agy_dir / "agy_model_selected.txt",
+            "gemini-3.6-flash-high",
+            default_agy,
+        )
 
         budget_env = env.copy()
         budget_env.pop("KIBITZ_CLAUDE_MODEL", None)
