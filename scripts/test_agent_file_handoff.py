@@ -214,7 +214,7 @@ def main() -> int:
 
         env = os.environ.copy()
         env["PATH"] = str(fake_bin) + os.pathsep + env.get("PATH", "")
-        env["KIBITZ_AGY_MODEL"] = ""
+        env.pop("KIBITZ_AGY_MODEL", None)
         env["KIBITZ_CLAUDE_MODEL"] = ""
         env["KIBITZ_CLAUDE_EFFORT"] = ""
         env["HOME"] = str(fake_home)
@@ -245,6 +245,21 @@ def main() -> int:
         assert_contains(first / "codex.md", "CODEX STDOUT REVIEW", ok)
         assert_contains(first / "claude.md", "CLAUDE STDOUT REVIEW", ok)
         assert_contains(first / "antigravity.md", "AGY FILE REVIEW", ok)
+        selected_model = (
+            first / "agy_model_selected.txt"
+        ).read_text(encoding="utf-8").strip()
+        if selected_model != "Gemini 3.6 Flash (High)":
+            raise AssertionError(
+                f"wrong default Antigravity picker name: {selected_model!r}"
+            )
+        assert_contains(
+            first / "antigravity.log", "MODEL: Gemini 3.6 Flash (High)", ok
+        )
+        assert_contains(
+            first / "antigravity.log",
+            "'--model', 'Gemini 3.6 Flash (High)'",
+            ok,
+        )
         assert_contains(first / "codex_quota_status.txt", "usage_percent=72", ok)
         assert_contains(first / "quota_warnings.md", "Codex usage 72%", ok)
 

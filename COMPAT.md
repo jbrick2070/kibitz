@@ -125,12 +125,12 @@ agy --model <model> --dangerously-skip-permissions --print-timeout 5m \
 
 ### Antigravity model policy
 
-- Default model: **`gemini-3.6-flash-high`** (override via `KIBITZ_AGY_MODEL`; set to
+- Default model: **`Gemini 3.6 Flash (High)`** (override via `KIBITZ_AGY_MODEL`; set to
   `""` to use agy's own default).
-- `agy` has no separate reasoning flag - reasoning rides the model slug's
-  suffix (e.g. `gemini-3.6-flash-high`, `gemini-3.6-flash-medium`, or
-  `gemini-3.6-flash-low`).
-- Latest observed Antigravity model menu (`agy models`, version `1.1.5`,
+- `agy` has no separate reasoning flag - reasoning rides the picker display
+  name's parenthesized level. The override must be the exact display name;
+  passing a lower-case discovery slug can silently drop the Antigravity lane.
+- Latest observed Antigravity discovery catalog (`agy models`, version `1.1.5`,
   2026-07-22):
 
   ```text
@@ -148,7 +148,7 @@ agy --model <model> --dangerously-skip-permissions --print-timeout 5m \
   ```
 
 - If you specifically want the older Pro Gemini lane, set
-  `KIBITZ_AGY_MODEL=gemini-3.1-pro-high`.
+  `KIBITZ_AGY_MODEL="Gemini 3.1 Pro (High)"`.
 
 - **Diversity rule (do not casually change):** `agy` is multi-model and can run
   Claude or gpt-oss too. Keep it on **Gemini**. Codex covers GPT-family review

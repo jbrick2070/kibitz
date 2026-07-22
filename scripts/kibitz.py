@@ -47,7 +47,7 @@ Usage:
 Configuration is via CLI args and environment variables only -- no hardcoded paths.
   KIBITZ_CODEX_REASONING  Codex reasoning effort (default "high"; "xhigh" retries to "high").
   KIBITZ_CODEX_MODEL      Codex model slug pin (e.g. "gpt-5.6-sol"; "" = auto-pick strongest).
-  KIBITZ_AGY_MODEL        Antigravity model slug (default "gemini-3.6-flash-high"; "" = agy default).
+  KIBITZ_AGY_MODEL        Antigravity picker display name (default "Gemini 3.6 Flash (High)"; "" = agy default).
   KIBITZ_CLAUDE_BUDGET    Claude spend tier: low, medium, high, or plan (default "medium").
   KIBITZ_CLAUDE_MODEL     Claude model alias/slug override ("" = Claude default).
   KIBITZ_CLAUDE_EFFORT    Claude effort override (low/medium/high/max; "" = Claude default).
@@ -129,18 +129,18 @@ CODEX_REASONING = os.environ.get("KIBITZ_CODEX_REASONING", "high")
 # Explicit model pin wins over auto-pick; "" (default) = poll catalog + preference order.
 CODEX_MODEL_ENV = os.environ.get("KIBITZ_CODEX_MODEL", "").strip()
 CODEX_MODEL_PREFERENCE = ("gpt-5.5", "gpt-5-codex", "gpt-5")
-# Antigravity has NO reasoning flag -- reasoning rides the model slug's -high/-low suffix.
-# agy 1.1.5 "agy models" (verified 2026-07-22) exposes Gemini 3.6 Flash
-# high/medium/low, Gemini 3.5 Flash high/medium/low, Gemini 3.1 Pro high/low,
-# Claude Sonnet/Opus 4.6, and GPT-OSS 120B. Default to the latest high Gemini
-# lane from that menu; set KIBITZ_AGY_MODEL=gemini-3.1-pro-high for the older
-# Pro lane, or "" to use agy's own default.
+# Antigravity has NO reasoning flag -- reasoning rides the picker display name's
+# parenthesized level. agy 1.1.5 "agy models" (verified 2026-07-22) exposes
+# discovery slugs, but --model requires the exact picker display name. Default
+# to the latest high Gemini lane as "Gemini 3.6 Flash (High)"; set
+# KIBITZ_AGY_MODEL="Gemini 3.1 Pro (High)" for the older Pro lane, or "" to use
+# agy's own default.
 # DIVERSITY RULE (do NOT casually change): agy is MULTI-MODEL -- it can run Gemini AND
 # claude-opus / claude-sonnet / gpt-oss. Keep agy on GEMINI: Codex is GPT-family
 # and Claude Code can supply the Claude-family lane, so agy=Gemini gives three
 # DISTINCT model families; agy=Opus duplicates Claude and agy=gpt-oss duplicates
 # Codex, collapsing the panel's whole value.
-AGY_MODEL = os.environ.get("KIBITZ_AGY_MODEL", "gemini-3.6-flash-high")
+AGY_MODEL = os.environ.get("KIBITZ_AGY_MODEL", "Gemini 3.6 Flash (High)")
 AGY_PRINT_TIMEOUT = os.environ.get("KIBITZ_AGY_PRINT_TIMEOUT", "5m")
 CLAUDE_BUDGET = os.environ.get("KIBITZ_CLAUDE_BUDGET", "medium").strip().lower()
 CLAUDE_MODEL_ENV = os.environ.get("KIBITZ_CLAUDE_MODEL")
@@ -792,12 +792,17 @@ def run_agy(prompt: str, repo: Path, out_file: Path, log_file: Path) -> bool:
     (out_file.parent / "agy_model_selected.txt").write_text(
         AGY_MODEL or "(agy default)", encoding="utf-8")
     print(f"  -> antigravity: model={AGY_MODEL or 'default'} file-handoff -> {out_file.name}")
+    model_receipt = (
+        f"MODEL: {AGY_MODEL or '(agy default)'}\n"
+        f"ARGV (prompt omitted): {cmd[:-1]!r}"
+    )
+    write_process_log(log_file, "", "", extra=model_receipt)
     started_at = time.time()
     try:
         proc = subprocess.run(cmd, stdin=subprocess.DEVNULL, text=True, cwd=str(repo),
                               capture_output=True, encoding="utf-8", errors="replace",
                               timeout=PER_AGENT_TIMEOUT)
-        write_process_log(log_file, proc.stdout or "", proc.stderr or "")
+        write_process_log(log_file, proc.stdout or "", proc.stderr or "", extra=model_receipt)
     except subprocess.TimeoutExpired as exc:
         diagnostic = quota_diagnostic(
             "antigravity", started_at, safe_text(exc.stdout), safe_text(exc.stderr))
