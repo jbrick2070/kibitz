@@ -126,22 +126,74 @@ def _which(name: str, *extra_dirs: str):
 # strongest non-mini model, default reasoning_effort="high". xhigh is model-dependent -> try
 # only if asked, retry once with high on failure. See COMPAT.md.
 CODEX_REASONING = os.environ.get("KIBITZ_CODEX_REASONING", "high")
+
+# ---------------------------------------------------------------------------
+# NAMING A MODEL: three different things, and mixing them up is how lanes go
+# stale. The split is NOT api-vs-cli -- all three appear on both sides.
+#
+#   SLUG          the machine identifier: "gpt-5.6-sol", "gemini-3.1-pro-high",
+#                 "claude-opus-5". What `agy models` prints, what an API wants.
+#   ALIAS         an identifier that RESOLVES to whatever is current:
+#                 "~openai/gpt-latest", or the Claude CLI's bare "opus" /
+#                 "sonnet" / "haiku". Self-updating.
+#   PIN           not a kind of name -- the ACT of fixing on one specific
+#                 version so it cannot move. You pin a slug.
+#
+#   ...and agy is the awkward one: its --model wants neither the slug nor an
+#   alias but the PICKER DISPLAY NAME, "Gemini 3.7 Flash (High)", parentheses
+#   included, while `agy models` shows you slugs.
+#
+# THE RULE THIS BUYS: aliases do not rot; pinned slugs do. Both stale lanes
+# found on 2026-08-17 were pinned (Codex's preference tuple, agy's display
+# name), and the Claude lane -- which uses bare aliases -- had not drifted at
+# all. Prefer an alias unless you specifically need a frozen version, and if you
+# must pin, re-verify it against the live catalog when a campaign starts.
+# ---------------------------------------------------------------------------
+
 # Explicit model pin wins over auto-pick; "" (default) = poll catalog + preference order.
 CODEX_MODEL_ENV = os.environ.get("KIBITZ_CODEX_MODEL", "").strip()
-CODEX_MODEL_PREFERENCE = ("gpt-5.5", "gpt-5-codex", "gpt-5")
+#: STALE PREFERENCE IS A SILENT DOWNGRADE (2026-07-27). This tuple read
+#: ("gpt-5.5", "gpt-5-codex", "gpt-5") while the live catalog already carried
+#: gpt-5.6-sol / -luna / -terra, so every arc quietly ran the older model and
+#: only ``codex_model_selected.txt`` said so. The auto-pick FALLBACK below
+#: (highest "gpt-5*" slug by reverse sort) would have chosen gpt-5.6-terra --
+#: alphabetically last, not strongest -- so the fallback cannot be trusted to
+#: age gracefully either. Keep the operator's model of record FIRST.
+CODEX_MODEL_PREFERENCE = ("gpt-5.6-sol", "gpt-5.5", "gpt-5-codex", "gpt-5")
 # Antigravity has NO reasoning flag -- reasoning rides the picker display name's
-# parenthesized level. agy 1.1.5 "agy models" (verified 2026-07-22) exposes
-# discovery slugs, but --model requires the exact picker display name. Default
-# to the latest high Gemini lane as "Gemini 3.6 Flash (High)"; set
-# KIBITZ_AGY_MODEL="Gemini 3.1 Pro (High)" for the older Pro lane, or "" to use
-# agy's own default.
+# parenthesized level. `agy models` exposes discovery slugs, but --model requires
+# the exact PICKER DISPLAY NAME, parentheses and all.
+#
+# REFRESHED 2026-08-17 against live `agy models`, which listed:
+#   gemini-3.7-flash-high/medium/low, gemini-3.6-flash-*, gemini-3.5-flash-*,
+#   gemini-3.1-pro-high/low, claude-sonnet-4-6, claude-opus-4-6-thinking,
+#   gpt-oss-120b-medium
+# The default was "Gemini 3.6 Flash (High)" while 3.7 Flash had shipped, so every
+# arc quietly ran a generation behind -- the SAME stale-pin failure recorded on
+# CODEX_MODEL_PREFERENCE above. Both 3.7 Flash (High) and 3.1 Pro (High) returned
+# real reviews the day this was refreshed, so both are proven, not guessed.
+# 3.1 Pro is the CURRENT Pro lane (there is no 3.6/3.7 Pro) -- it is not "older",
+# and the previous wording here said so incorrectly.
+#
+# TWO PROVEN LANES, and running BOTH in one round is the cheap way to get a
+# second opinion when Codex is unavailable:
+#   KIBITZ_AGY_MODEL="Gemini 3.7 Flash (High)"   (default, fast)
+#   KIBITZ_AGY_MODEL="Gemini 3.1 Pro (High)"     (slower, needs a raised
+#                                                 KIBITZ_AGY_PRINT_TIMEOUT)
+# Give each lane its OWN --topic, or the second overwrites the first's review.
+#
 # DIVERSITY RULE (do NOT casually change): agy is MULTI-MODEL -- it can run Gemini AND
 # claude-opus / claude-sonnet / gpt-oss. Keep agy on GEMINI: Codex is GPT-family
 # and Claude Code can supply the Claude-family lane, so agy=Gemini gives three
 # DISTINCT model families; agy=Opus duplicates Claude and agy=gpt-oss duplicates
 # Codex, collapsing the panel's whole value.
-AGY_MODEL = os.environ.get("KIBITZ_AGY_MODEL", "Gemini 3.6 Flash (High)")
-AGY_PRINT_TIMEOUT = os.environ.get("KIBITZ_AGY_PRINT_TIMEOUT", "5m")
+AGY_MODEL = os.environ.get("KIBITZ_AGY_MODEL", "Gemini 3.7 Flash (High)")
+# A PRINT TIMEOUT IS NOT A QUOTA BLOCK (2026-08-17). `--timeout` on this script
+# does NOT reach agy; this env var builds agy's own --print-timeout. The Pro lane
+# died twice on "Error: timeout waiting for response" at the old 5m default and
+# landed first try at 15m, while `agy models` returned rc=0 throughout -- so read
+# the error before declaring a lane exhausted.
+AGY_PRINT_TIMEOUT = os.environ.get("KIBITZ_AGY_PRINT_TIMEOUT", "15m")
 CLAUDE_BUDGET = os.environ.get("KIBITZ_CLAUDE_BUDGET", "medium").strip().lower()
 CLAUDE_MODEL_ENV = os.environ.get("KIBITZ_CLAUDE_MODEL")
 CLAUDE_EFFORT_ENV = os.environ.get("KIBITZ_CLAUDE_EFFORT")
@@ -262,6 +314,22 @@ Return ONLY your review in the structure specified above. No preamble.
 FILE_OUTPUT_DIRECTIVE = """
 
 ------------------------------------------------------------------
+TOOL HEALTH CHECK (DO THIS FIRST): Before reviewing anything, confirm your own file tools
+actually work. Open ONE real source file in the repo under review and confirm you can read its
+contents. If ANY tool call fails, errors, is blocked, or returns nothing -- STOP. Do not write a
+review. Instead write ONLY this to the output file, with the error text quoted verbatim:
+  TOOL CHECK: FAIL
+  <the verbatim error>
+  I cannot read the repository.
+A refusal is a USEFUL answer and costs the driver nothing. A review written without file access
+is WORSE THAN NO ANSWER, because it looks like evidence and gets folded into a plan. This check
+exists because a lane once returned a confident, well-formatted trace whose middle steps read
+"summary | summary | standard processing applied" while asserting it was proven from the real
+filesystem, and named a file and a class that do not exist -- rc was 0 and nothing caught it.
+NEVER pad a report to keep its shape. If you cannot trace a step, write "UNTRACED -- could not
+follow". An honest gap is worth more than a smooth chain, and placeholder filler now FAILS the
+leg automatically.
+
 OUTPUT CONTRACT (MANDATORY): You are a READ-ONLY reviewer. Do NOT modify, create, or delete any
 file EXCEPT the single output file below. Write your COMPLETE review (only the review, in the
 structure specified above) to this exact path, then stop:
@@ -624,6 +692,47 @@ def record_failure_diagnostic(name: str, out_file: Path, log_file: Path, diagnos
     record_quota_hold(name, out_file, diagnostic)
 
 
+#: Markers of a review written WITHOUT working file access.
+#:
+#: An agent whose tools are broken does not fail loudly -- it returns a
+#: confident, well-formatted report, so exit code and non-emptiness both pass.
+#: Observed 2026-08-17: an Antigravity lane returned a code trace whose middle
+#: steps read "summary | summary | summary | Standard processing applied" while
+#: asserting it was "proven from the real filesystem", and named a source file
+#: and a class that do not exist. The operator had separately hit a telemetry
+#: plugin crash that killed that agent's tool execution outright.
+#:
+#: These tells are STRUCTURAL, not factual -- they need no knowledge of the repo
+#: under review, which is what makes them safe to apply to every lane.
+UNREADABLE_REVIEW_MARKERS = (
+    "standard processing applied",
+    "initial logic and parameters are validated",
+    "tool check: fail",
+    "i cannot read the repository",
+    "cannot read the repository",
+    "unable to access the file",
+)
+
+#: A chain/table row that is literally the word "summary" in several columns.
+_PLACEHOLDER_ROW = re.compile(r"\|\s*summary\s*\|\s*summary\s*\|", re.IGNORECASE)
+
+
+def unreadable_review_diagnostic(review: str) -> str:
+    """Return a reason string if this review looks written without file access.
+
+    Empty string means it looks genuine. Deliberately conservative: it fires
+    only on filler no grounded reviewer would emit, because a false positive
+    here silently discards a real review.
+    """
+    low = review.lower()
+    for marker in UNREADABLE_REVIEW_MARKERS:
+        if marker in low:
+            return f"contains the placeholder/failure marker {marker!r}"
+    if _PLACEHOLDER_ROW.search(review):
+        return "chain rows are filled with the literal word 'summary'"
+    return ""
+
+
 def collect_review(
     name: str,
     out_file: Path,
@@ -640,6 +749,19 @@ def collect_review(
     if review:
         out_file.write_text(review + "\n", encoding="utf-8")
     ok = returncode == 0 and bool(review)
+    if ok:
+        # A NON-EMPTY review can still be evidence-free. Fail the leg rather
+        # than hand the driver something that reads like grounding and is not:
+        # the entire value of this panel is that claims can be checked against
+        # the real files, and a review written blind cannot be.
+        unreadable = unreadable_review_diagnostic(review)
+        if unreadable:
+            msg = (f"{name}: review looks written WITHOUT file access -- "
+                   f"{unreadable}. Failing this leg; re-run once the agent's "
+                   f"tools are confirmed working.")
+            print(f"  [FAILED] {msg}")
+            append_process_log(log_file, msg)
+            ok = False
     if returncode == 0 and not review:
         msg = (f"{name}: rc=0 but NO review text (agy #76 / strict read-only). "
                "Failing this leg.")
