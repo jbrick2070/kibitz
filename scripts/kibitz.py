@@ -252,6 +252,84 @@ AGENT_LABELS = {
 }
 
 
+#: Matches "gemini-3.7-flash-high" style discovery slugs from `agy models`.
+_AGY_SLUG = re.compile(r"^(?P<family>[a-z]+)-(?P<ver>\d+(?:\.\d+)?)-(?P<lane>[a-z]+)")
+
+
+def _agy_catalog(exe: str) -> list[tuple[str, str]]:
+    """(slug, display_name) pairs from `agy models`. [] if it cannot be read."""
+    try:
+        proc = subprocess.run([exe, "models"], capture_output=True, text=True,
+                              timeout=90)
+    except Exception:
+        return []
+    pairs = []
+    for line in (proc.stdout or "").splitlines():
+        parts = [p.strip() for p in line.split("\t") if p.strip()]
+        if len(parts) >= 2 and _AGY_SLUG.match(parts[0]):
+            pairs.append((parts[0], parts[1]))
+    return pairs
+
+
+def agy_pin_warnings(exe: str) -> list[str]:
+    """Warn when the configured agy pin is invalid or a generation behind.
+
+    A PIN THAT IS ONLY CHECKED BY HAND GOES STALE -- twice in one week here
+    (the Codex preference tuple and this display name), and in both cases the
+    arc kept running happily on the older model with nothing but a receipt file
+    to say so. This is deliberately a WARNING and never an error: a stale pin
+    still produces a real review, so blocking the run would cost more than the
+    drift does.
+    """
+    catalog = _agy_catalog(exe)
+    if not catalog:
+        return []
+    warnings: list[str] = []
+    by_display = {display: slug for slug, display in catalog}
+    if AGY_MODEL and AGY_MODEL not in by_display:
+        return [f"KIBITZ_AGY_MODEL={AGY_MODEL!r} is not in `agy models`; "
+                f"--model needs the exact picker display name. Available: "
+                f"{', '.join(sorted(by_display)[:6])}..."]
+    pinned_slug = by_display.get(AGY_MODEL, "")
+    match = _AGY_SLUG.match(pinned_slug)
+    if not match:
+        return warnings
+    family, lane = match.group("family"), match.group("lane")
+    pinned_ver = float(match.group("ver"))
+    newest = pinned_ver
+    newest_display = AGY_MODEL
+    for slug, display in catalog:
+        other = _AGY_SLUG.match(slug)
+        if not other or other.group("family") != family:
+            continue
+        # Compare like with like: a Flash pin is not stale because a Pro exists.
+        if other.group("lane") != lane or slug.split("-")[2] != pinned_slug.split("-")[2]:
+            continue
+        ver = float(other.group("ver"))
+        if ver > newest:
+            newest, newest_display = ver, display
+    if newest > pinned_ver:
+        warnings.append(
+            f"agy pin is a generation behind: using {AGY_MODEL!r} while "
+            f"{newest_display!r} is available. Set KIBITZ_AGY_MODEL to refresh, "
+            f"or update the default in this script."
+        )
+    return warnings
+
+
+def report_pin_freshness(exe: str, run_dir: "Path | None" = None) -> list[str]:
+    """Print (and optionally record) any stale-pin warnings. Never raises."""
+    try:
+        warnings = agy_pin_warnings(exe)
+    except Exception as exc:  # pragma: no cover - a check must never break a run
+        return [f"pin check skipped ({type(exc).__name__}: {exc})"]
+    for warning in warnings:
+        print(f"  [PIN] {warning}")
+        if run_dir is not None:
+            append_quota_warning(run_dir, warning)
+    return warnings
+
+
 def resolve_claude_budget():
     """Return (budget, model, effort, note) for the Claude reviewer lane."""
     budget = CLAUDE_BUDGET or "medium"
@@ -1094,7 +1172,27 @@ def main() -> None:
                     help="print selected driver/agents and exit without calling agents.")
     ap.add_argument("--timeout", type=float, default=None,
                     help="per-agent timeout in seconds (default: none -- agents batch).")
+    ap.add_argument("--check-pins", action="store_true",
+                    help="check the configured model pins against the live "
+                         "catalogs, print any that are stale, and exit. Run "
+                         "this at install and at the start of a campaign.")
     args = ap.parse_args()
+
+    if args.check_pins:
+        # Install-time / start-of-campaign check. A pin only ever verified by
+        # hand goes stale silently -- the arc keeps running a generation behind
+        # and only a receipt file records it.
+        agy_exe = _which("agy", _WIN_AGY_BIN)
+        if not agy_exe:
+            print("  [PIN] agy not found on PATH; skipping the antigravity pin check.")
+        else:
+            print(f"  [PIN] configured antigravity lane: {AGY_MODEL!r}")
+            if not report_pin_freshness(agy_exe):
+                print("  [PIN] antigravity pin is current.")
+        print(f"  [PIN] codex preference order: {', '.join(CODEX_MODEL_PREFERENCE)}")
+        print("  [PIN] claude lane uses ALIASES (haiku/sonnet/opus), which do "
+              "not rot -- nothing to refresh.")
+        return 0
 
     if args.timeout is not None:
         PER_AGENT_TIMEOUT = args.timeout

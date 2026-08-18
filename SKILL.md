@@ -305,6 +305,49 @@ python scripts/comfyui_profile.py --repo . --comfyui-root /workspace/ComfyUI --m
 
 ## First-run check and quota discipline
 
+- **CHECK THE PINS AT INSTALL, AND AGAIN WHEN A CAMPAIGN STARTS.**
+
+  ```
+  python scripts/kibitz.py --check-pins
+  ```
+
+  It polls the live catalog, reports whether the configured lane is current,
+  invalid, or a generation behind, and exits. **Run it as part of install and at
+  the top of any multi-round arc.**
+
+  Why it exists: a pin only ever verified by hand goes stale silently. Twice in
+  one week the panel ran a generation behind and nothing said so - Codex's
+  preference tuple still listed `gpt-5.5` after `gpt-5.6-sol` shipped, and the
+  antigravity default still said `Gemini 3.6 Flash (High)` after 3.7 landed. In
+  both cases the arc completed happily; only a receipt file recorded which model
+  actually answered.
+
+  It **warns, never blocks** - a stale pin still returns a real review, so
+  failing the run would cost more than the drift. And note which lanes can even
+  go stale: **aliases do not rot, pinned slugs do.** The Claude lane uses bare
+  aliases (`haiku`/`sonnet`/`opus`) and has never drifted; the two that did were
+  both pinned.
+- **A BROKEN AGENT DOES NOT FAIL LOUDLY - IT RETURNS A CONFIDENT REPORT.** This
+  is the failure mode to know about, because every other guard passes it: exit
+  code 0, non-empty file, well-formatted headings. Observed 2026-08-17 - a lane
+  returned a code trace whose middle steps read
+  `summary | summary | summary | Standard processing applied`, asserted it was
+  "proven from the real filesystem", and named a source file and a class that do
+  not exist. The operator had separately hit a telemetry-plugin crash that killed
+  that agent's tool execution outright.
+  - **The tells are STRUCTURAL, not factual** - you need no knowledge of the repo
+    under review to spot them: placeholder filler mid-chain, branch labels that
+    contradict the logic the report itself quoted, and an impact list far thinner
+    than the code supports.
+  - **Two guards ship for this.** Every file-handoff agent is told, in
+    `FILE_OUTPUT_DIRECTIVE`, to confirm its own file tools FIRST and to write
+    `TOOL CHECK: FAIL` plus the verbatim error instead of a review if they do not
+    - a refusal is a useful answer, a blind review is worse than none. And
+    `collect_review` runs `unreadable_review_diagnostic`, which FAILS the leg on
+    that filler instead of counting it as collected.
+  - **The instruction alone was never going to be enough** - an instructed model
+    is still a model - so the structural check is the real guard and the prompt
+    line is belt-and-braces.
 - **Eyeball `<agent>.md` on the first run.** The file-handoff means `<agent>.md`
   is the agent's own written review. Success is judged by exit code + the file
   existing and being non-empty - the script does NOT verify the file actually
