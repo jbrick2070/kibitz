@@ -56,6 +56,11 @@ Configuration is via CLI args and environment variables only -- no hardcoded pat
   KIBITZ_QUOTA_WARN_THRESHOLDS
                            Comma list of usage warning thresholds (default "50,70,90").
   KIBITZ_QUOTA_RETRY_AFTER Suggested retry window after quota exhaustion (default "1h").
+  KIBITZ_QUOTA_SCAN_ALL_RECENT
+                          Set to 1 to scan every CLI log in the lookback window
+                          for quota markers. Default 0 = newest log only, so a
+                          lane that has since recovered is not blocked by a
+                          stale failure.
   KIBITZ_<AGENT>_USAGE_PERCENT
                            Optional explicit usage percent for codex, agy, or claude.
 
@@ -216,8 +221,24 @@ QUOTA_STATUS_TIMEOUT = float(os.environ.get("KIBITZ_QUOTA_STATUS_TIMEOUT", "15")
 QUOTA_WARN_THRESHOLDS_RAW = os.environ.get("KIBITZ_QUOTA_WARN_THRESHOLDS", "50,70,90")
 QUOTA_RETRY_AFTER_RAW = os.environ.get("KIBITZ_QUOTA_RETRY_AFTER", "1h")
 QUOTA_LOG_LOOKBACK_SECONDS = float(os.environ.get("KIBITZ_QUOTA_LOG_LOOKBACK_SECONDS", "3600"))
-QUOTA_BLOCK_ON_RECENT = os.environ.get("KIBITZ_QUOTA_BLOCK_ON_RECENT", "1").strip().lower() not in (
-    "0", "false", "no", "off",
+# A CLI-LOG MARKER WARNS; IT NO LONGER BLOCKS (default flipped 2026-08-18).
+# Antigravity hits 429s internally, retries, and succeeds: a log from a run that
+# produced a full 7.6 KB review carried 5x RESOURCE_EXHAUSTED and 4x "code 429".
+# So a log marker is evidence about the provider's rate limiter, NOT evidence
+# that this invocation will fail, and blocking on it costs a whole reviewer seat
+# for a lane that would have answered. Same reasoning the pin check already uses:
+# it warns, never blocks, because failing the run costs more than the drift.
+# Direct evidence still blocks -- `output_quota_diagnostic` reads the agent's own
+# output and sees whether THIS call actually died.
+# Set KIBITZ_QUOTA_BLOCK_ON_RECENT=1 to restore log-marker blocking.
+QUOTA_BLOCK_ON_RECENT = os.environ.get("KIBITZ_QUOTA_BLOCK_ON_RECENT", "0").strip().lower() in (
+    "1", "true", "yes", "on",
+)
+# Scan every CLI log in the lookback window instead of only the newest one.
+# OFF by default: a lane that failed and has since succeeded is not blocked.
+# See agy_log_quota_diagnostic for why the newest log is the authority.
+QUOTA_SCAN_ALL_RECENT = os.environ.get("KIBITZ_QUOTA_SCAN_ALL_RECENT", "0").strip().lower() in (
+    "1", "true", "yes", "on",
 )
 
 QUOTA_MARKERS = (
@@ -625,8 +646,37 @@ def output_quota_diagnostic(agent: str, stdout_text: str = "", stderr_text: str 
 
 
 def agy_log_quota_diagnostic(started_at: float, lookback_seconds: float = AGY_LOG_LOOKBACK_SECONDS) -> str:
-    """Detect Antigravity quota/backend exhaustion in recent CLI logs."""
-    for path in recent_agy_log_files(started_at, lookback_seconds):
+    """Detect Antigravity quota/backend exhaustion in recent CLI logs.
+
+    A LANE'S STATE IS ITS LATEST STATE, NOT ITS WORST STATE IN THE WINDOW.
+    This used to scan every log in the lookback window (default 1h) and block on
+    the first one carrying a quota marker. Because the list is newest-first, a
+    clean recent run did not clear an older failure -- it was simply skipped on
+    the way to the stale one. Observed 2026-08-18: a 429 at 18:32 blocked the
+    lane at 19:03 with two clean runs (18:46, 19:03) in between, and the retry
+    reported the SAME 18:32 log. The lane had recovered half an hour earlier and
+    kibitz refused to call it, so the round ran a reviewer short for no reason.
+
+    So: inspect the newest log only. A quota block is a CURRENT condition, and
+    the newest log is the only evidence of the current condition. If a lane
+    failed and has since succeeded, it is not blocked.
+
+    This trades a preflight false-POSITIVE (blocking a healthy lane, which costs
+    a whole reviewer seat and is invisible unless someone reads the log paths)
+    for a possible false-NEGATIVE (letting a doomed call through). That trade is
+    deliberate and cheap: a genuinely exhausted lane still fails on its own
+    output, and `output_quota_diagnostic` catches the marker from the attempt
+    itself -- later than preflight, but from reality rather than from history.
+
+    Set KIBITZ_QUOTA_SCAN_ALL_RECENT=1 to restore the scan-the-whole-window
+    behaviour.
+    """
+    paths = recent_agy_log_files(started_at, lookback_seconds)
+    if not paths:
+        return ""
+    # recent_agy_log_files sorts newest-first.
+    scan = paths if QUOTA_SCAN_ALL_RECENT else paths[:1]
+    for path in scan:
         text = tail_text(path)
         lines = quota_marker_lines(text)
         if not lines:

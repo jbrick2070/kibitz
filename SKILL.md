@@ -375,6 +375,25 @@ python scripts/comfyui_profile.py --repo . --comfyui-root /workspace/ComfyUI --m
   429`, `check quota`, `Individual quota reached`) and annotates the failed
   review file only when those markers exist. A plain `timeout waiting for
   response` remains an `agy` timeout/print-mode failure.
+- **A CLI-LOG MARKER WARNS; IT DOES NOT BLOCK (default changed 2026-08-18).**
+  The log scan is evidence about the provider's rate limiter, not about whether
+  your call will fail. **Antigravity hits 429s internally, retries, and
+  succeeds:** measured on a run that returned a complete 7.6 KB review, its own
+  CLI log carried **5x `RESOURCE_EXHAUSTED` and 4x `code 429`**. Blocking on that
+  costs a whole reviewer seat for a lane that would have answered -- which is
+  exactly what happened on an r3 round that then ran a reviewer short for no
+  reason. Same reasoning the pin check already uses: it warns, never blocks,
+  because failing the run costs more than the drift.
+  - **Direct evidence still blocks.** `output_quota_diagnostic` reads the
+    agent's OWN stdout/stderr and sees whether *this* invocation actually died;
+    that remains a hard failure, and the quota hold receipt is still written.
+  - **Only the NEWEST log is consulted**, because a lane's state is its latest
+    state, not its worst state in the window. Previously the scan walked every
+    log in the lookback window (default 1h) newest-first and blocked on the first
+    marker found, so a clean recent run did not clear an older failure -- it was
+    skipped on the way to the stale one.
+  - Restore the old behaviour with `KIBITZ_QUOTA_BLOCK_ON_RECENT=1`, and the
+    whole-window scan with `KIBITZ_QUOTA_SCAN_ALL_RECENT=1`.
 - **4 rounds is the default arc.** Do not add passes beyond r4 unless the user
   asks. Do not inflate an explicit scoped campaign into work the user did not
   request, and do not claim omitted rounds ran.
