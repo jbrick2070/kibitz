@@ -71,6 +71,10 @@ WIN_CURSOR_DIR = os.path.expandvars(r"%LOCALAPPDATA%\cursor-agent")
 CURSOR_LAUNCHERS = ("cursor-agent.cmd", "agent.cmd", "cursor-agent.exe", "agent.exe")
 
 
+def _is_windowsapps_alias(path: str) -> bool:
+    return "\\windowsapps\\" in str(path).lower().replace("/", "\\")
+
+
 def _cursor_present() -> bool:
     # Same order as kibitz.py's _which_cursor: KIBITZ_CURSOR_BIN, install dir, PATH.
     configured = os.environ.get("KIBITZ_CURSOR_BIN", "").strip()
@@ -83,7 +87,13 @@ def _cursor_present() -> bool:
         root = Path(candidate_dir)
         if root.is_dir() and any((root / c).is_file() for c in CURSOR_LAUNCHERS):
             return True
-    return any(shutil.which(n) is not None for n in ("cursor-agent", "agent"))
+    # Skip the WindowsApps execution alias, same as kibitz.py and doctor.py -- it is
+    # a stub that is not the real CLI. These three resolvers must not drift apart.
+    for name in ("cursor-agent", "agent"):
+        found = shutil.which(name)
+        if found and not _is_windowsapps_alias(found):
+            return True
+    return False
 
 
 def check_agents() -> Dict[str, bool]:

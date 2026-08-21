@@ -480,6 +480,32 @@ def main() -> int:
         if "AGY FILE REVIEW" in empty_review.read_text(encoding="utf-8"):
             raise AssertionError("empty agy leg produced a fake review")
 
+        # THE DEFAULT PATH, which is the one production actually runs: a quota marker
+        # in a recent CLI log WARNS and the lane still gets its call. Antigravity 429s
+        # internally, retries and succeeds, so blocking on a log marker costs a whole
+        # reviewer seat for a lane that would have answered. The leg above pins the
+        # opt-in =1 blocking path; without this one the shipped default is untested.
+        warn_env = env.copy()
+        warn_env.pop("KIBITZ_QUOTA_BLOCK_ON_RECENT", None)
+        write_agy_quota_log(fake_home)
+        warned = run_kibitz(repo, plan, warn_env, "stub-warn-not-block", "agy", "cursor")
+        if warned.returncode != 0:
+            raise AssertionError(textwrap.dedent(f"""\
+                a log quota marker must WARN, not block, by default
+                stdout:
+                {warned.stdout}
+                stderr:
+                {warned.stderr}
+            """))
+        warn_dir = run_dir(repo, "stub-warn-not-block")
+        if "quota preflight" in warned.stdout:
+            raise AssertionError(
+                "default run blocked on a CLI-log quota marker; it must only warn"
+            )
+        # Both lanes still had to actually produce their reviews.
+        assert_contains(warn_dir / "antigravity.md", "AGY FILE REVIEW", warned)
+        assert_contains(warn_dir / "cursor.md", "CURSOR STDOUT REVIEW", warned)
+
     check_review_acceptance()
     print("agent file-handoff regression: PASS")
     return 0

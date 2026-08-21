@@ -3,9 +3,9 @@
 `SKILL.md` is the durable contract. This file is the volatile part: the exact
 CLI flags, the model-selection policy, and the tool versions this was proven on.
 
-> **These flags move fast. If a flag breaks, run `codex --help` / `agy --help`
-> / `claude --help` and update this file - do not patch around it in the
-> script.** The skill's design (file-handoff, read-only Codex, active-driver
+> **These flags move fast. If a flag breaks, run `codex --help` / `agy --help` /
+> `claude --help` / `agent --help` and update this file - do not patch around it
+> in the script.** The skill's design (file-handoff, read-only Codex, active-driver
 > judge, driver-aware reviewer selection) is stable; only the surface flags
 > below are expected to drift.
 

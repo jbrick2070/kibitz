@@ -69,12 +69,14 @@ Configuration is via CLI args and environment variables only -- no hardcoded pat
                           Keep this on GROK -- see the DIVERSITY RULE.
   KIBITZ_CURSOR_MODE      Cursor execution mode, ask or plan (default "ask"). Both are
                           read-only; the lane never gets write access.
-  KIBITZ_CURSOR_BIN       Directory holding the Cursor launcher. Overrides the default
-                          %LOCALAPPDATA%\\cursor-agent lookup and PATH.
+  KIBITZ_CURSOR_BIN       Directory holding the Cursor launcher, OR the launcher file
+                          itself. Overrides the default %LOCALAPPDATA%\\cursor-agent
+                          lookup and PATH.
   KIBITZ_CLAUDE_BUDGET    Claude spend tier: low, medium, high, or plan (default "medium").
   KIBITZ_CLAUDE_MODEL     Claude model alias/slug override ("" = Claude default).
   KIBITZ_CLAUDE_EFFORT    Claude effort override (low/medium/high/max; "" = Claude default).
-  KIBITZ_DRIVER           Active driver: auto, none, codex, claude, antigravity/agy.
+  KIBITZ_DRIVER           Active driver, excluded from the panel: auto, none, codex,
+                          claude, antigravity/agy, cursor.
   KIBITZ_QUOTA_CHECK      Set to 0/false/no to skip non-prompt quota preflight checks.
   KIBITZ_QUOTA_WARN_THRESHOLDS
                            Comma list of usage warning thresholds (default "50,70,90").
@@ -85,7 +87,8 @@ Configuration is via CLI args and environment variables only -- no hardcoded pat
                           lane that has since recovered is not blocked by a
                           stale failure.
   KIBITZ_<AGENT>_USAGE_PERCENT
-                           Optional explicit usage percent for codex, agy, or claude.
+                           Optional explicit usage percent for codex, agy, claude,
+                           or cursor.
 
 SAFETY: Codex and Cursor run read-only (hard guarantee: Cursor's ask mode has no
 write tool, and the lane passes neither --force nor --yolo). Antigravity runs UNSANDBOXED
@@ -1227,8 +1230,10 @@ def unreadable_review_diagnostic(review: str) -> str:
         if marker in low:
             return f"contains the placeholder/failure marker {marker!r}"
     # The EXPLICIT SENTINEL. FILE_OUTPUT_DIRECTIVE / STDOUT_OUTPUT_DIRECTIVE tell a
-    # tool-blind agent to lead with this exact line, so finding it at the start of a
-    # line is decisive on its own.
+    # tool-blind agent to LEAD with this exact line, so it is decisive only at the
+    # start of the DOCUMENT (\A, no MULTILINE). Not "the start of a line": both of
+    # those directives quote the sentinel themselves, indented, so a line-anchored
+    # match discards any review that quotes the output contract.
     if _TOOL_CHECK_FAIL.search(review):
         return "contains the placeholder/failure marker 'tool check: fail'"
     # Otherwise the discriminator is SHAPE, not wording. A blocked agent is told to
@@ -1666,7 +1671,9 @@ def normalize_driver(raw):
 
 def detect_driver():
     """Best-effort host detection. Return (driver, source), where driver is one
-    of codex/antigravity/claude or None when standalone/full-panel."""
+    of codex/antigravity/claude/cursor, or None when standalone/full-panel.
+
+    Whatever comes back is EXCLUDED from the panel: a host does not review itself."""
     env_driver = os.environ.get("KIBITZ_DRIVER")
     if env_driver:
         try:
