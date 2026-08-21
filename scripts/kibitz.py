@@ -46,7 +46,9 @@ Usage:
 
 Configuration is via CLI args and environment variables only -- no hardcoded paths.
   KIBITZ_CODEX_REASONING  Codex reasoning effort (default "high"; "xhigh" retries to "high").
-  KIBITZ_CODEX_MODEL      Codex model slug pin (e.g. "gpt-5.6-sol"; "" = auto-pick strongest).
+  KIBITZ_CODEX_MODEL      Codex model slug pin, validated against the live catalog
+                          (e.g. "gpt-5.6-sol"; "" = auto-pick strongest). A slug the
+                          catalog does not list warns and falls back rather than failing.
   KIBITZ_AGY_MODEL        Antigravity picker display name (default "Gemini 3.6 Flash (High)"; "" = agy default).
   KIBITZ_CLAUDE_BUDGET    Claude spend tier: low, medium, high, or plan (default "medium").
   KIBITZ_CLAUDE_MODEL     Claude model alias/slug override ("" = Claude default).
@@ -155,8 +157,12 @@ CODEX_REASONING = os.environ.get("KIBITZ_CODEX_REASONING", "high")
 # must pin, re-verify it against the live catalog when a campaign starts.
 # ---------------------------------------------------------------------------
 
-# Explicit model pin wins over auto-pick; "" (default) = poll catalog + preference order.
-CODEX_MODEL_ENV = os.environ.get("KIBITZ_CODEX_MODEL", "").strip()
+# Explicit model pin, VALIDATED against the live catalog; "" (default) = poll catalog +
+# preference order. A pin is a REQUEST, not a command: pick_codex_model accepts it only
+# when `codex debug models` actually lists it, so a slug that has been renamed or retired
+# degrades to the catalog preference with a warning instead of failing the whole leg on
+# an invalid-model error. Same reasoning as the pin-rot block below.
+CODEX_MODEL_REQUEST = os.environ.get("KIBITZ_CODEX_MODEL", "").strip() or None
 #: STALE PREFERENCE IS A SILENT DOWNGRADE (2026-07-27). This tuple read
 #: ("gpt-5.5", "gpt-5-codex", "gpt-5") while the live catalog already carried
 #: gpt-5.6-sol / -luna / -terra, so every arc quietly ran the older model and
@@ -366,14 +372,29 @@ def resolve_claude_budget():
 
 def pick_codex_model(exe: str, repo: Path, run_dir: Path):
     """Poll `codex debug models`, log it, pick the strongest non-mini model. Returns a slug or
-    None (let Codex use its default). Never picks mini/fast/spark unless nothing else exists."""
+    None (let Codex use its default). Never picks mini/fast/spark unless nothing else exists.
+
+    An explicit KIBITZ_CODEX_MODEL is accepted only when the live catalog lists
+    that exact slug. This prevents stale/private model names in config or the
+    environment from turning a review into an avoidable invalid-model failure.
+
+    Every branch writes codex_model_resolution.txt, so which model actually ran --
+    and why -- is on disk next to the review instead of inferred afterwards.
+    """
     import json as _json
+    resolution_file = run_dir / "codex_model_resolution.txt"
     try:
         raw = (subprocess.run([exe, "debug", "models"], cwd=str(repo), stdin=subprocess.DEVNULL,
                               capture_output=True, text=True, encoding="utf-8",
                               errors="replace", timeout=120).stdout
                or "")
     except Exception:  # noqa: BLE001
+        resolution_file.write_text(
+            "catalog=unavailable\n"
+            f"requested={CODEX_MODEL_REQUEST or '(none)'}\n"
+            "selected=(codex default)\n",
+            encoding="utf-8",
+        )
         return None
     (run_dir / "codex_models.json").write_text(raw, encoding="utf-8")
     slugs = []
@@ -384,11 +405,45 @@ def pick_codex_model(exe: str, repo: Path, run_dir: Path):
                 slugs.append(s)
     except Exception:  # noqa: BLE001
         slugs = []
+    if CODEX_MODEL_REQUEST:
+        if CODEX_MODEL_REQUEST in slugs:
+            resolution_file.write_text(
+                "catalog=available\n"
+                f"requested={CODEX_MODEL_REQUEST}\n"
+                f"selected={CODEX_MODEL_REQUEST}\n",
+                encoding="utf-8",
+            )
+            return CODEX_MODEL_REQUEST
+        resolution_file.write_text(
+            "catalog=available\n"
+            f"requested={CODEX_MODEL_REQUEST}\n"
+            "selected=(automatic catalog preference)\n"
+            "reason=requested slug is absent from the live catalog\n"
+            f"available={','.join(slugs) or '(none)'}\n",
+            encoding="utf-8",
+        )
+        print(
+            f"  [WARN] codex: requested model {CODEX_MODEL_REQUEST!r} is not in the live catalog; "
+            "using an available catalog model"
+        )
     for pref in CODEX_MODEL_PREFERENCE:
         if pref in slugs:
+            resolution_file.write_text(
+                "catalog=available\n"
+                f"requested={CODEX_MODEL_REQUEST or '(none)'}\n"
+                f"selected={pref}\n",
+                encoding="utf-8",
+            )
             return pref
     g5 = sorted((s for s in slugs if s.startswith("gpt-5")), reverse=True)
-    return g5[0] if g5 else None
+    selected = g5[0] if g5 else None
+    resolution_file.write_text(
+        "catalog=available\n"
+        f"requested={CODEX_MODEL_REQUEST or '(none)'}\n"
+        f"selected={selected or '(codex default)'}\n",
+        encoding="utf-8",
+    )
+    return selected
 
 
 GROUNDING_FOOTER = """
@@ -832,14 +887,35 @@ def record_failure_diagnostic(name: str, out_file: Path, log_file: Path, diagnos
 #:
 #: These tells are STRUCTURAL, not factual -- they need no knowledge of the repo
 #: under review, which is what makes them safe to apply to every lane.
-UNREADABLE_REVIEW_MARKERS = (
+#: FILLER tells: padding a grounded reviewer never emits. Safe to match ANYWHERE,
+#: because no honest review contains them at all.
+UNREADABLE_REVIEW_FILLER_MARKERS = (
     "standard processing applied",
     "initial logic and parameters are validated",
+)
+
+#: REFUSAL tells: the exact wording FILE_OUTPUT_DIRECTIVE asks a tool-blind agent to
+#: emit. These are NOT safe to match anywhere -- a genuine, grounded review that
+#: ANALYSES the refusal path quotes them verbatim, and a bare substring match then
+#: discards it. That is not hypothetical: on 2026-08-21 a 10,110-byte Cursor review
+#: citing real line numbers was failed for the single quoted phrase
+#: '"I cannot read the repository,"' inside its own argument about false fails --
+#: the exact outcome this function's docstring warns about.
+#:
+#: The discriminator is SHAPE, not wording. FILE_OUTPUT_DIRECTIVE tells a blocked
+#: agent to write ONLY the refusal, so a real refusal is SHORT and the marker sits at
+#: the TOP. A review that merely quotes the phrase is long and buries it mid-document.
+UNREADABLE_REVIEW_REFUSAL_MARKERS = (
     "tool check: fail",
     "i cannot read the repository",
     "cannot read the repository",
     "unable to access the file",
 )
+
+#: A refusal written per the directive is far shorter than any real review.
+REFUSAL_MAX_CHARS = 2000
+#: ...and the marker lands in its opening lines, not buried in an argument.
+REFUSAL_HEAD_CHARS = 400
 
 #: A chain/table row that is literally the word "summary" in several columns.
 _PLACEHOLDER_ROW = re.compile(r"\|\s*summary\s*\|\s*summary\s*\|", re.IGNORECASE)
@@ -853,8 +929,16 @@ def unreadable_review_diagnostic(review: str) -> str:
     here silently discards a real review.
     """
     low = review.lower()
-    for marker in UNREADABLE_REVIEW_MARKERS:
+    for marker in UNREADABLE_REVIEW_FILLER_MARKERS:
         if marker in low:
+            return f"contains the placeholder/failure marker {marker!r}"
+    head = low[:REFUSAL_HEAD_CHARS]
+    for marker in UNREADABLE_REVIEW_REFUSAL_MARKERS:
+        if marker not in low:
+            continue
+        # Fire only on the SHAPE of a refusal: a short document, or the marker in
+        # the opening lines. A long review that quotes the phrase is a real review.
+        if len(low) <= REFUSAL_MAX_CHARS or marker in head:
             return f"contains the placeholder/failure marker {marker!r}"
     if _PLACEHOLDER_ROW.search(review):
         return "chain rows are filled with the literal word 'summary'"
@@ -979,7 +1063,7 @@ def run_codex(prompt: str, repo: Path, out_file: Path, log_file: Path) -> bool:
         return False
     if out_file.exists():
         out_file.unlink()
-    model = CODEX_MODEL_ENV or pick_codex_model(exe, repo, run_dir)
+    model = pick_codex_model(exe, repo, run_dir)
     (run_dir / "codex_model_selected.txt").write_text(model or "(codex default)", encoding="utf-8")
     (run_dir / "codex_reasoning_selected.txt").write_text(CODEX_REASONING, encoding="utf-8")
 

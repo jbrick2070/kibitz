@@ -248,16 +248,16 @@ def main() -> int:
         selected_model = (
             first / "agy_model_selected.txt"
         ).read_text(encoding="utf-8").strip()
-        if selected_model != "Gemini 3.6 Flash (High)":
+        if selected_model != "Gemini 3.7 Flash (High)":
             raise AssertionError(
                 f"wrong default Antigravity picker name: {selected_model!r}"
             )
         assert_contains(
-            first / "antigravity.log", "MODEL: Gemini 3.6 Flash (High)", ok
+            first / "antigravity.log", "MODEL: Gemini 3.7 Flash (High)", ok
         )
         assert_contains(
             first / "antigravity.log",
-            "'--model', 'Gemini 3.6 Flash (High)'",
+            "'--model', 'Gemini 3.7 Flash (High)'",
             ok,
         )
         assert_contains(first / "codex_quota_status.txt", "usage_percent=72", ok)
@@ -333,6 +333,13 @@ def main() -> int:
 
         empty_env = env.copy()
         empty_env["KIBITZ_STUB_AGY_MODE"] = "empty"
+        # This leg exercises the quota-hold PREFLIGHT, which since the
+        # "a quota marker in a CLI log is not a reason to skip a reviewer"
+        # change no longer blocks on a log marker by default -- a lane that
+        # 429s internally, retries and succeeds must not lose its seat.
+        # KIBITZ_QUOTA_BLOCK_ON_RECENT=1 is the documented switch that restores
+        # blocking, so the preflight path still has coverage here.
+        empty_env["KIBITZ_QUOTA_BLOCK_ON_RECENT"] = "1"
         write_agy_quota_log(fake_home)
         degraded = run_kibitz(repo, plan, empty_env, "stub-empty", "codex", "agy")
         if degraded.returncode != 0:
