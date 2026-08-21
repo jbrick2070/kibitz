@@ -138,9 +138,10 @@ The standard per-round driver artifacts are `driver_anchor.md`, `judgment.md`,
 and `final.md`, alongside `input.md` and the reviewer files.
 
 After r4, deliver the final hardened plan and report the **actual** agent calls
-made. A normal driver-aware full arc makes 8 external calls (two reviewer agents
-x four rounds); `--driver none` or `--all-agents` makes 12. A scoped campaign
-reports its smaller real count and names the rounds not run.
+made. With four lanes, a normal driver-aware full arc makes **12** external calls
+(three reviewer agents x four rounds, since the driver is excluded);
+`--driver none` or `--all-agents` makes **16**. A scoped campaign reports its
+smaller real count and names the rounds not run.
 
 **Domain profiles (optional).** The four round prompts are deliberately
 general. When the target is a specialized codebase, use the matching profile so
@@ -246,13 +247,15 @@ python scripts/kibitz.py \
 - `.kibitz/comfyui.local.md` in the target repo is auto-detected; when present,
   kibitz appends both the shipped ComfyUI profile and the local overlay.
 - `--no-profiles` disables both requested profiles and local auto-detection.
-- `--driver {auto,none,codex,claude,antigravity,agy}` selects the active driver.
+- `--driver {auto,none,codex,claude,antigravity,agy,cursor}` selects the active
+  driver, which is then EXCLUDED from the panel -- a driver never reviews itself.
   `auto` honors `KIBITZ_DRIVER` and known host environment hints. `none` means
-  standalone/full external panel.
+  standalone/full external panel (all four lanes).
 - `--all-agents` runs Codex + Antigravity + Claude Code + Cursor regardless of
   driver. This ignores the host boundary and can make a driver review itself.
-- `--only codex`, `--only antigravity`/`--only agy`, or `--only claude` runs
-  selected agents (repeatable) and overrides the driver-aware default.
+- `--only codex`, `--only antigravity`/`--only agy`, `--only claude`, or
+  `--only cursor` (aliases: `agent`, `cursor-agent`) runs selected agents
+  (repeatable) and overrides the driver-aware default.
 - `--dry-run` prints the detected/selected driver and reviewer agents without
   calling any agents; use it to confirm host detection without spending prompts.
 - If `agy` is out of quota, use `--only claude` or repeat
@@ -367,15 +370,16 @@ python scripts/comfyui_profile.py --repo . --comfyui-root /workspace/ComfyUI --m
   - **The instruction alone was never going to be enough** - an instructed model
     is still a model - so the structural check is the real guard and the prompt
     line is belt-and-braces.
-- **Eyeball `<agent>.md` on the first run.** The file-handoff means `<agent>.md`
-  is the agent's own written review. Success is judged by exit code + the file
-  existing and being non-empty - the script does NOT verify the file actually
-  *contains a review* rather than an error message. If it is empty (or is an
-  "I can't access the repo" note) with exit 0, the agent ignored the write
-  directive: check `<agent>.log` and re-run once.
+- **Eyeball `<agent>.md` on the first run.** For codex/agy/claude the
+  file-handoff means `<agent>.md` is the agent's own written review; for the
+  **cursor** lane it is the stdout kibitz captured, since ask mode has no write
+  tool. Success is judged by exit code + a non-empty review that survives the
+  structural check - the script does NOT deeply verify the text really *is* a
+  review rather than a plausible error message. If it is empty with exit 0, the
+  agent ignored its output directive: check `<agent>.log` and re-run once.
 - **All lanes can hit quota, credit, or rate limits.** A normal driver-aware
-  full arc is 8 external agent calls (two reviewer agents x four rounds), which
-  is fine, but high-volume loops can still bite. Kibitz writes
+  full arc is 12 external agent calls (three reviewer agents x four rounds),
+  which is fine, but high-volume loops can still bite. Kibitz writes
   `<agent>_quota_status.txt` for each selected lane and `quota_warnings.md`
   when it has something worth surfacing.
 - **Warn on usage only when there is a real number.** The default warning

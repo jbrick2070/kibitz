@@ -289,13 +289,21 @@ def main() -> int:
         # passed --trust, requested NO write access, and withheld the file-handoff
         # directive. Reaching this line means all four held.
         assert_contains(first / "cursor.md", "CURSOR STDOUT REVIEW", ok)
-        cursor_model = (
-            first / "cursor_model_selected.txt"
-        ).read_text(encoding="utf-8").strip()
-        if cursor_model != "cursor-grok-4.6-high":
+        cursor_receipt = dict(
+            line.split("=", 1)
+            for line in (first / "cursor_model_selected.txt")
+            .read_text(encoding="utf-8").splitlines()
+            if "=" in line
+        )
+        if cursor_receipt.get("requested") != "cursor-grok-4.6-high":
             raise AssertionError(
-                f"wrong default Cursor model: {cursor_model!r} "
+                f"wrong default Cursor model: {cursor_receipt.get('requested')!r} "
                 f"(the seat must stay on Grok -- see the DIVERSITY RULE)"
+            )
+        if cursor_receipt.get("family") != "grok":
+            raise AssertionError(
+                f"Cursor seat resolved to family {cursor_receipt.get('family')!r}; "
+                f"it must be grok, or it duplicates a lane the panel already has"
             )
         assert_contains(first / "cursor.log", "TRANSPORT: stdin", ok)
         assert_contains(first / "cursor.log", "MODE: ask", ok)

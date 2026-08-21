@@ -66,11 +66,20 @@ CURSOR_LAUNCHERS = ("cursor-agent.cmd", "agent.cmd", "cursor-agent.exe", "agent.
 
 
 def find_cursor(win_dir: str = WIN_CURSOR_DIR):
-    """Find the Cursor CLI launcher. Returns a path string, or None."""
-    base = Path(win_dir)
-    if base.is_dir():
+    """Find the Cursor CLI launcher. Returns a path string, or None.
+
+    Same resolution order as kibitz.py's _which_cursor, and it must STAY the same:
+    KIBITZ_CURSOR_BIN, then the install dir, then PATH. A doctor that looks somewhere
+    the runner does not will cheerfully report READY for a lane that cannot start.
+    """
+    for candidate_dir in (os.environ.get("KIBITZ_CURSOR_BIN", "").strip(), win_dir):
+        if not candidate_dir:
+            continue
+        root = Path(candidate_dir)
+        if not root.is_dir():
+            continue
         for candidate in CURSOR_LAUNCHERS:
-            path = base / candidate
+            path = root / candidate
             if path.is_file():
                 return str(path)
     for name in ("cursor-agent", "agent"):

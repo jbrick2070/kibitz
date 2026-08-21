@@ -72,9 +72,13 @@ CURSOR_LAUNCHERS = ("cursor-agent.cmd", "agent.cmd", "cursor-agent.exe", "agent.
 
 
 def _cursor_present() -> bool:
-    base = Path(WIN_CURSOR_DIR)
-    if base.is_dir() and any((base / c).is_file() for c in CURSOR_LAUNCHERS):
-        return True
+    # Same order as kibitz.py's _which_cursor: KIBITZ_CURSOR_BIN, install dir, PATH.
+    for candidate_dir in (os.environ.get("KIBITZ_CURSOR_BIN", "").strip(), WIN_CURSOR_DIR):
+        if not candidate_dir:
+            continue
+        root = Path(candidate_dir)
+        if root.is_dir() and any((root / c).is_file() for c in CURSOR_LAUNCHERS):
+            return True
     return any(shutil.which(n) is not None for n in ("cursor-agent", "agent"))
 
 

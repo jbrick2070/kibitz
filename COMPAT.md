@@ -131,7 +131,7 @@ agy --model <model> --dangerously-skip-permissions --print-timeout 5m \
 
 ### Antigravity model policy
 
-- Default model: **`Gemini 3.6 Flash (High)`** (override via `KIBITZ_AGY_MODEL`; set to
+- Default model: **`Gemini 3.7 Flash (High)`** (override via `KIBITZ_AGY_MODEL`; set to
   `""` to use agy's own default).
 - `agy` has no separate reasoning flag - reasoning rides the picker display
   name's parenthesized level. The override must be the exact display name;
@@ -326,7 +326,8 @@ python scripts/kibitz.py --doc plan.md --round r1 --driver none
 
 ## If a flag breaks
 
-1. Run `codex --help` / `codex exec --help`, `agy --help`, or `claude --help`.
+1. Run `codex --help` / `codex exec --help`, `agy --help`, `claude --help`, or
+   `agent --help`.
 2. Find the current equivalent of the flag that broke.
 3. Update the invocation in `scripts/kibitz.py` AND the entry in this file in the
    same change. Note the version you verified it on in the table above.

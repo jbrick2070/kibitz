@@ -170,8 +170,12 @@ def _which_cursor(extra_dir: str = ""):
     pick up from PATH; KIBITZ_CURSOR_BIN beats both so a non-standard install -- or
     an offline test stub -- can point this lane wherever it needs to go.
     """
-    for base in (Path(os.environ.get("KIBITZ_CURSOR_BIN", "").strip() or "."),
-                 Path(extra_dir or _WIN_CURSOR_BIN)):
+    configured = os.environ.get("KIBITZ_CURSOR_BIN", "").strip()
+    # KIBITZ_CURSOR_BIN may name the launcher itself, not just its directory --
+    # pointing an override at an executable is the obvious thing to try.
+    if configured and Path(configured).is_file():
+        return configured
+    for base in (Path(configured or "."), Path(extra_dir or _WIN_CURSOR_BIN)):
         if str(base) == "." or not base.is_dir():
             continue
         for candidate in _CURSOR_LAUNCHERS:
@@ -184,15 +188,6 @@ def _which_cursor(extra_dir: str = ""):
             return found
     return None
 
-
-#: The prompt is fed to Cursor on STDIN, never as an argv element. Cursor's Windows
-#: launcher is a .cmd that re-invokes PowerShell through cmd.exe, whose command line is
-#: capped at 8191 characters -- and a real kibitz round prompt (round text + profiles +
-#: grounding footer) runs past 10,000. Passing it as an argument fails instantly with
-#: "The command line is too long." while every short smoke test still passes, which is
-#: exactly how this would have shipped broken. Proven 2026-08-21: argv -> rc=1 in 0.1s;
-#: stdin -> rc=0 with a 10,110-byte review.
-CURSOR_PROMPT_ON_STDIN = True
 
 #: Matches "cursor-grok-4.6-high" / "gemini-3.1-pro" style ids from `agent --list-models`.
 _CURSOR_MODEL_LINE = re.compile(r"^\s*(?P<slug>[a-z0-9][a-z0-9.\-]*)\s+-\s+(?P<name>.+?)\s*$")
@@ -453,10 +448,85 @@ def _cursor_catalog(exe: str) -> list[tuple[str, str]]:
     return pairs
 
 
+def _version_tuple(raw: str) -> tuple:
+    """Compare versions COMPONENT-WISE, not as floats.
+
+    float("4.10") is 4.1, which sorts BELOW 4.6 -- so a float comparison would decide
+    that a future Grok 4.10 is older than today's 4.6 and silently keep the stale pin.
+    This is the same silent-downgrade class the pin check exists to catch, so it must
+    not be reintroduced by the check itself.
+    """
+    parts = []
+    for chunk in str(raw).split("."):
+        try:
+            parts.append(int(chunk))
+        except ValueError:
+            parts.append(0)
+    return tuple(parts)
+
+
 #: Splits "cursor-grok-4.6-high" into ("cursor-grok", 4.6, "high") so a pin is only
 #: compared against its OWN family and effort lane -- a Grok High pin is not stale
 #: because a Gemini exists, or because a Grok Low is newer.
 _CURSOR_SLUG = re.compile(r"^(?P<family>[a-z][a-z0-9-]*?)-(?P<ver>\d+(?:\.\d+)?)-(?P<lane>[a-z0-9-]+)$")
+
+
+#: Model-id prefixes mapped to the family they belong to. Used to enforce the
+#: one-family-per-seat rule at runtime instead of only in a comment.
+_CURSOR_FAMILY_PREFIXES = (
+    ("cursor-grok", "grok"),
+    ("grok", "grok"),
+    ("claude", "claude"),
+    ("gpt", "gpt"),
+    ("composer", "composer"),
+    ("gemini", "gemini"),
+    ("kimi", "kimi"),
+    ("glm", "glm"),
+)
+#: Families another lane already holds. Selecting one for the Cursor seat does not
+#: fail the run -- the operator may be deliberately testing -- but it must never be
+#: silent, because the whole value of the panel is four INDEPENDENT readings.
+_FAMILIES_HELD_BY_OTHER_LANES = {
+    "gpt": "codex",
+    "composer": "codex",
+    "gemini": "antigravity",
+    "claude": "claude",
+}
+
+
+def cursor_model_family(model: str) -> str:
+    """Best-effort family name for a Cursor model id ('' if unrecognised)."""
+    low = (model or "").strip().lower()
+    for prefix, family in _CURSOR_FAMILY_PREFIXES:
+        if low.startswith(prefix):
+            return family
+    return ""
+
+
+def cursor_family_warning() -> str:
+    """Warn when the Cursor seat duplicates a family another lane already holds.
+
+    THE RULE THIS ENFORCES: codex=GPT, agy=Gemini, claude=Claude, cursor=Grok. Cursor
+    can serve ~200 ids across every family, so this seat is the easiest of the four to
+    point somewhere that quietly collapses the panel into three opinions wearing four
+    names. A comment cannot catch that; this can.
+    """
+    if not CURSOR_MODEL:
+        return ("KIBITZ_CURSOR_MODEL is empty, so this lane runs whatever Cursor's own "
+                "default happens to be -- which may duplicate another lane's family. "
+                "Pin a Grok id to keep the four seats independent.")
+    family = cursor_model_family(CURSOR_MODEL)
+    owner = _FAMILIES_HELD_BY_OTHER_LANES.get(family)
+    if owner:
+        return (f"KIBITZ_CURSOR_MODEL={CURSOR_MODEL!r} is {family}-family, which the "
+                f"{owner!r} lane already holds. The panel is only worth four calls if "
+                f"the families are distinct -- prefer a Grok id (or Kimi/GLM).")
+    if family and family != "grok":
+        return ""
+    if not family:
+        return (f"KIBITZ_CURSOR_MODEL={CURSOR_MODEL!r} is not a recognised family; "
+                f"cannot confirm it does not duplicate another lane.")
+    return ""
 
 
 def cursor_pin_warnings(exe: str) -> list[str]:
@@ -480,7 +550,7 @@ def cursor_pin_warnings(exe: str) -> list[str]:
     if not match:
         return []
     family, lane = match.group("family"), match.group("lane")
-    pinned_ver = float(match.group("ver"))
+    pinned_ver = _version_tuple(match.group("ver"))
     newest, newest_slug = pinned_ver, CURSOR_MODEL
     for slug in slugs:
         other = _CURSOR_SLUG.match(slug)
@@ -488,7 +558,7 @@ def cursor_pin_warnings(exe: str) -> list[str]:
             continue
         if other.group("family") != family or other.group("lane") != lane:
             continue
-        ver = float(other.group("ver"))
+        ver = _version_tuple(other.group("ver"))
         if ver > newest:
             newest, newest_slug = ver, slug
     if newest > pinned_ver:
@@ -1092,16 +1162,24 @@ UNREADABLE_REVIEW_FILLER_MARKERS = (
 #: agent to write ONLY the refusal, so a real refusal is SHORT and the marker sits at
 #: the TOP. A review that merely quotes the phrase is long and buries it mid-document.
 UNREADABLE_REVIEW_REFUSAL_MARKERS = (
-    "tool check: fail",
     "i cannot read the repository",
     "cannot read the repository",
     "unable to access the file",
 )
 
+#: The explicit sentinel the output directives mandate, anchored to a line start so a
+#: mid-sentence mention cannot trip it. This one is decisive regardless of length.
+_TOOL_CHECK_FAIL = re.compile(r"^\s*tool check:\s*fail", re.IGNORECASE | re.MULTILINE)
+
 #: A refusal written per the directive is far shorter than any real review.
 REFUSAL_MAX_CHARS = 2000
 #: ...and the marker lands in its opening lines, not buried in an argument.
 REFUSAL_HEAD_CHARS = 400
+#: Every round prompt demands a VERDICT line, so a document carrying a refusal marker
+#: but NO verdict is a refusal however long it grew. This closes the gap a pure length
+#: test leaves: a blocked agent that dumps a large verbatim error before its refusal
+#: line would otherwise sail past REFUSAL_MAX_CHARS and be accepted as a review.
+REVIEW_STRUCTURE_MARKERS = ("verdict:", "must-fix", "should-fix")
 
 #: A chain/table row that is literally the word "summary" in several columns.
 _PLACEHOLDER_ROW = re.compile(r"\|\s*summary\s*\|\s*summary\s*\|", re.IGNORECASE)
@@ -1118,13 +1196,22 @@ def unreadable_review_diagnostic(review: str) -> str:
     for marker in UNREADABLE_REVIEW_FILLER_MARKERS:
         if marker in low:
             return f"contains the placeholder/failure marker {marker!r}"
-    head = low[:REFUSAL_HEAD_CHARS]
+    # The EXPLICIT SENTINEL. FILE_OUTPUT_DIRECTIVE / STDOUT_OUTPUT_DIRECTIVE tell a
+    # tool-blind agent to lead with this exact line, so finding it at the start of a
+    # line is decisive on its own.
+    if _TOOL_CHECK_FAIL.search(review):
+        return "contains the placeholder/failure marker 'tool check: fail'"
+    # Otherwise the discriminator is SHAPE, not wording. A blocked agent is told to
+    # write ONLY the refusal, so a real refusal carries no VERDICT / MUST-FIX
+    # structure. A grounded review that merely QUOTES a refusal phrase while
+    # reasoning about the refusal path does -- and it must survive, because that
+    # exact false positive threw away a 10,110-byte review citing real line numbers
+    # on 2026-08-21. Matching these generic English phrases anywhere is what broke it.
+    has_structure = any(marker in low for marker in REVIEW_STRUCTURE_MARKERS)
+    if has_structure and len(low) > REFUSAL_MAX_CHARS:
+        return ""
     for marker in UNREADABLE_REVIEW_REFUSAL_MARKERS:
-        if marker not in low:
-            continue
-        # Fire only on the SHAPE of a refusal: a short document, or the marker in
-        # the opening lines. A long review that quotes the phrase is a real review.
-        if len(low) <= REFUSAL_MAX_CHARS or marker in head:
+        if marker in low:
             return f"contains the placeholder/failure marker {marker!r}"
     if _PLACEHOLDER_ROW.search(review):
         return "chain rows are filled with the literal word 'summary'"
@@ -1408,31 +1495,6 @@ def run_claude(prompt: str, repo: Path, out_file: Path, log_file: Path) -> bool:
     return ok
 
 
-#: Cursor's real payload lives in versions/<YYYY.MM.DD[-HH-MM-SS]-hash>/, the same layout
-#: its own launcher .ps1 parses. Only used for the argv fallback below.
-_CURSOR_VERSION_DIR = re.compile(r"^\d{4}\.\d{1,2}\.\d{1,2}(-\d{2}-\d{2}-\d{2})?-[a-f0-9]+$")
-
-
-def newest_cursor_version_dir(base: str = _WIN_CURSOR_BIN):
-    """Newest versions/<...>/ directory in a Cursor CLI install, or None."""
-    versions = Path(base) / "versions"
-    if not versions.is_dir():
-        return None
-    candidates = [d for d in versions.iterdir()
-                  if d.is_dir() and _CURSOR_VERSION_DIR.match(d.name)]
-    if not candidates:
-        return None
-
-    def key(directory: Path):
-        parts = directory.name.split("-")[0].split(".")
-        try:
-            return (int(parts[0]), int(parts[1]), int(parts[2]))
-        except (IndexError, ValueError):
-            return (0, 0, 0)
-
-    return max(candidates, key=key)
-
-
 def run_cursor(prompt: str, repo: Path, out_file: Path, log_file: Path) -> bool:
     """Cursor CLI: READ-ONLY (--mode ask), prompt on STDIN, review captured from STDOUT.
 
@@ -1441,83 +1503,82 @@ def run_cursor(prompt: str, repo: Path, out_file: Path, log_file: Path) -> bool:
     --trust is required for every headless run: without it Cursor exits rc=1 with
     "Workspace Trust Required" no matter which repo it is pointed at.
     """
+    # Clear the stale review FIRST, before any early return. collect_review reads the
+    # FILE before stdout, so a previous run's cursor.md left behind by a not-found or
+    # preflight-blocked leg would be read as THIS run's answer -- and
+    # record_failure_diagnostic would append its note to that stale review, producing
+    # something that reads like a fresh graded result and is not.
+    if out_file.exists():
+        out_file.unlink()
+    run_dir = out_file.parent
+
     exe = _which_cursor()
     if exe is None:
         log_file.write_text(
-            r"cursor CLI not found: looked for agent.cmd / cursor-agent.cmd in "
-            r"%LOCALAPPDATA%\cursor-agent and for 'cursor-agent'/'agent' on PATH",
+            r"cursor CLI not found: looked in KIBITZ_CURSOR_BIN, then "
+            r"%LOCALAPPDATA%\cursor-agent, then PATH for 'cursor-agent'/'agent'",
             encoding="utf-8")
         print("  x cursor: command not found")
         return False
-    run_dir = out_file.parent
+    family_warning = cursor_family_warning()
+    if family_warning:
+        print(f"  [FAMILY] {family_warning}")
+        append_quota_warning(run_dir, family_warning)
     preflight_blocker = quota_preflight("cursor", exe, repo, run_dir)
     if preflight_blocker:
         record_failure_diagnostic("cursor", out_file, log_file, preflight_blocker)
         print("  [FAILED] cursor (quota preflight)")
         return False
-    if out_file.exists():
-        # Same reason the other lanes unlink: collect_review reads the FILE before
-        # stdout, so a stale review or a previous TOOL CHECK note would mask this
-        # run's real stdout answer.
-        out_file.unlink()
 
     full = prompt + STDOUT_OUTPUT_DIRECTIVE
-    flags = ["-p", "--trust", "--mode", CURSOR_MODE, "--output-format", "text"]
+    cmd = [exe, "-p", "--trust", "--mode", CURSOR_MODE, "--output-format", "text"]
     if CURSOR_MODEL:
-        flags += ["--model", CURSOR_MODEL]
+        cmd += ["--model", CURSOR_MODEL]
     (run_dir / "cursor_model_selected.txt").write_text(
-        CURSOR_MODEL or "(cursor default)", encoding="utf-8")
+        "\n".join([
+            f"requested={CURSOR_MODEL or '(cursor default)'}",
+            f"family={cursor_model_family(CURSOR_MODEL) or '(unknown)'}",
+            f"mode={CURSOR_MODE}",
+            f"exe={exe}",
+        ]) + "\n",
+        encoding="utf-8")
 
-    # PRIMARY: prompt on stdin, so a >8191-char prompt never touches cmd.exe.
-    # FALLBACK: node + index.js directly, which is pure CreateProcess (32767 limit) and
-    # bypasses the launcher entirely. Wired as a live retry rather than a manual note,
-    # because stdin prompt-feeding is undocumented and a Cursor update could remove it.
-    attempts = [("stdin", [exe] + flags, full)]
-    vdir = newest_cursor_version_dir()
-    if vdir is not None:
-        node, index = vdir / "node.exe", vdir / "index.js"
-        if node.is_file() and index.is_file():
-            attempts.append(("node-argv", [str(node), str(index)] + flags + [full], None))
-
-    ok = False
-    proc = None
-    for label, cmd, stdin_text in attempts:
-        print(f"  -> cursor: model={CURSOR_MODEL or 'default'} mode={CURSOR_MODE} "
-              f"transport={label} read-only -> stdout")
-        receipt = (f"MODEL: {CURSOR_MODEL or '(cursor default)'}\n"
-                   f"MODE: {CURSOR_MODE}\n"
-                   f"TRANSPORT: {label}\n"
-                   f"ARGV (prompt omitted): {[c for c in cmd if c != full]!r}")
-        started_at = time.time()
-        try:
-            proc = subprocess.run(
-                cmd, cwd=str(repo), capture_output=True, text=True,
-                encoding="utf-8", errors="replace", timeout=PER_AGENT_TIMEOUT,
-                input=stdin_text,
-                stdin=None if stdin_text is not None else subprocess.DEVNULL,
-            )
-            write_process_log(log_file, proc.stdout or "", proc.stderr or "", extra=receipt)
-        except subprocess.TimeoutExpired as exc:
-            diagnostic = quota_diagnostic("cursor", started_at,
-                                          safe_text(exc.stdout), safe_text(exc.stderr))
-            record_failure_diagnostic("cursor", out_file, log_file, diagnostic)
-            print(f"  [FAILED] cursor (timeout after {PER_AGENT_TIMEOUT}s, {label})")
-            return False
-        ok = collect_review("cursor", out_file, log_file, proc.returncode, proc.stdout or "")
-        if ok:
-            break
-        if label != attempts[-1][0]:
-            print(f"  .. cursor {label} transport produced no review -> retrying via node")
-            if out_file.exists():
-                out_file.unlink()
-
-    if not ok and proc is not None:
-        diagnostic = quota_diagnostic("cursor", time.time(),
+    # THE PROMPT GOES ON STDIN, NEVER IN ARGV. agent.cmd re-invokes PowerShell through
+    # cmd.exe (8191-char ceiling) and a real round prompt runs past 10,000, so as an
+    # argument it dies instantly with "The command line is too long." There is
+    # deliberately NO automatic fallback transport: retrying on failure cannot tell a
+    # transport problem from a refusal or a bad review, so it would discard a genuine
+    # "TOOL CHECK: FAIL" answer and pay for a second call to re-ask the same question.
+    # If stdin ever stops working, this must fail loudly and be fixed here.
+    print(f"  -> cursor: model={CURSOR_MODEL or 'default'} mode={CURSOR_MODE} "
+          f"transport=stdin read-only -> stdout")
+    receipt = (f"MODEL: {CURSOR_MODEL or '(cursor default)'}\n"
+               f"MODE: {CURSOR_MODE}\n"
+               f"TRANSPORT: stdin\n"
+               f"ARGV (prompt omitted): {cmd!r}")
+    write_process_log(log_file, "", "", extra=receipt)
+    started_at = time.time()
+    try:
+        proc = subprocess.run(
+            cmd, cwd=str(repo), capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=PER_AGENT_TIMEOUT,
+            input=full,
+        )
+        write_process_log(log_file, proc.stdout or "", proc.stderr or "", extra=receipt)
+    except subprocess.TimeoutExpired as exc:
+        diagnostic = quota_diagnostic("cursor", started_at,
+                                      safe_text(exc.stdout), safe_text(exc.stderr))
+        record_failure_diagnostic("cursor", out_file, log_file, diagnostic)
+        print(f"  [FAILED] cursor (timeout after {PER_AGENT_TIMEOUT}s)")
+        return False
+    ok = collect_review("cursor", out_file, log_file, proc.returncode, proc.stdout or "")
+    if not ok:
+        diagnostic = quota_diagnostic("cursor", started_at,
                                       proc.stdout or "", proc.stderr or "")
         if diagnostic:
             record_failure_diagnostic("cursor", out_file, log_file, diagnostic)
-    rc = proc.returncode if proc is not None else "n/a"
-    print(f"  [{'OK' if ok else 'FAILED'}] cursor (rc={rc}, model={CURSOR_MODEL or 'default'})")
+    print(f"  [{'OK' if ok else 'FAILED'}] cursor "
+          f"(rc={proc.returncode}, model={CURSOR_MODEL or 'default'})")
     return ok
 
 
