@@ -71,6 +71,39 @@ def main() -> int:
         print("CLAUDE STDOUT REVIEW")
         return 0
 
+    if agent == "cursor" and args[:1] == ["status"]:
+        print("Logged in as stub@example.com")
+        return 0
+
+    if agent == "cursor" and "--list-models" in args:
+        print("cursor-grok-4.6-high - Cursor Grok 4.6")
+        return 0
+
+    if agent == "cursor":
+        # The real lane is READ-ONLY and takes its prompt on STDIN, never as argv.
+        # Assert both here, because both are the properties that actually break:
+        # an argv prompt dies on the 8191-char cmd.exe wall, and a file-handoff
+        # directive on a lane with no write tool manufactures a false failure.
+        stdin_prompt = sys.stdin.read()
+        if not stdin_prompt.strip():
+            print("STUB ERROR: cursor lane received no prompt on stdin", file=sys.stderr)
+            return 3
+        if "--trust" not in args:
+            print("STUB ERROR: cursor lane must pass --trust", file=sys.stderr)
+            return 4
+        if any(flag in args for flag in ("--force", "--yolo",
+                                         "--dangerously-skip-permissions")):
+            print("STUB ERROR: cursor lane must not request write access", file=sys.stderr)
+            return 5
+        if "to this exact path, then stop:" in stdin_prompt:
+            print("STUB ERROR: cursor lane must not get FILE_OUTPUT_DIRECTIVE",
+                  file=sys.stderr)
+            return 6
+        if os.environ.get("KIBITZ_STUB_CURSOR_MODE") == "empty":
+            return 0
+        print("CURSOR STDOUT REVIEW")
+        return 0
+
     if agent == "agy" and args[:1] == ["models"]:
         print("Gemini Stub (High)")
         return 0
@@ -95,16 +128,19 @@ if __name__ == "__main__":
 def write_stub_launchers(fake_bin: Path) -> None:
     stub_py = fake_bin / "stub_agent.py"
     stub_py.write_text(STUB_AGENT, encoding="utf-8")
-    for agent in ("codex", "agy", "claude"):
+    # "agent" is the Cursor launcher name; kibitz resolves it via KIBITZ_CURSOR_BIN,
+    # which the caller points at fake_bin. The others are shadowed on PATH.
+    for agent, launcher_name in (("codex", "codex"), ("agy", "agy"),
+                                 ("claude", "claude"), ("cursor", "agent")):
         if os.name == "nt":
-            launcher = fake_bin / f"{agent}.cmd"
+            launcher = fake_bin / f"{launcher_name}.cmd"
             body = (
                 "@echo off\n"
                 f'"{sys.executable}" "%~dp0stub_agent.py" {agent} %*\n'
             )
             launcher.write_text(body, encoding="utf-8")
         else:
-            launcher = fake_bin / agent
+            launcher = fake_bin / launcher_name
             launcher.write_text(
                 f'#!/bin/sh\nexec "{sys.executable}" "$(dirname "$0")/stub_agent.py" {agent} "$@"\n',
                 encoding="utf-8",
@@ -214,6 +250,9 @@ def main() -> int:
 
         env = os.environ.copy()
         env["PATH"] = str(fake_bin) + os.pathsep + env.get("PATH", "")
+        # kibitz resolves the Cursor launcher from its install directory before PATH,
+        # so shadowing PATH alone would still reach a REAL Cursor install on a dev box.
+        env["KIBITZ_CURSOR_BIN"] = str(fake_bin)
         env.pop("KIBITZ_AGY_MODEL", None)
         env["KIBITZ_CLAUDE_MODEL"] = ""
         env["KIBITZ_CLAUDE_EFFORT"] = ""
@@ -232,7 +271,8 @@ def main() -> int:
         env["KIBITZ_CODEX_USAGE_PERCENT"] = "72"
         env["KIBITZ_QUOTA_RETRY_AFTER"] = "30m"
 
-        ok = run_kibitz(repo, plan, env, "stub-pass", "codex", "claude", "agy")
+        ok = run_kibitz(repo, plan, env, "stub-pass",
+                        "codex", "claude", "agy", "cursor")
         if ok.returncode != 0:
             raise AssertionError(textwrap.dedent(f"""\
                 expected successful stub pass
@@ -245,6 +285,23 @@ def main() -> int:
         assert_contains(first / "codex.md", "CODEX STDOUT REVIEW", ok)
         assert_contains(first / "claude.md", "CLAUDE STDOUT REVIEW", ok)
         assert_contains(first / "antigravity.md", "AGY FILE REVIEW", ok)
+        # The cursor stub returns non-zero unless the lane fed its prompt on STDIN,
+        # passed --trust, requested NO write access, and withheld the file-handoff
+        # directive. Reaching this line means all four held.
+        assert_contains(first / "cursor.md", "CURSOR STDOUT REVIEW", ok)
+        cursor_model = (
+            first / "cursor_model_selected.txt"
+        ).read_text(encoding="utf-8").strip()
+        if cursor_model != "cursor-grok-4.6-high":
+            raise AssertionError(
+                f"wrong default Cursor model: {cursor_model!r} "
+                f"(the seat must stay on Grok -- see the DIVERSITY RULE)"
+            )
+        assert_contains(first / "cursor.log", "TRANSPORT: stdin", ok)
+        assert_contains(first / "cursor.log", "MODE: ask", ok)
+        cursor_log = (first / "cursor.log").read_text(encoding="utf-8")
+        if "--force" in cursor_log or "--yolo" in cursor_log:
+            raise AssertionError("cursor lane requested write access")
         selected_model = (
             first / "agy_model_selected.txt"
         ).read_text(encoding="utf-8").strip()

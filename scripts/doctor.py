@@ -4,14 +4,15 @@
 Run this BEFORE you try to use kibitz. It tells you, in plain English, whether
 your machine has everything kibitz needs - and if not, exactly what to install.
 
-It checks five things WITHOUT ever calling the agents (so it is fast and safe):
+It checks six things WITHOUT ever calling the agents (so it is fast and safe):
   1. Python is new enough (3.9 or later).
   2. The OpenAI Codex CLI (the `codex` command) is installed.
   3. The Google Antigravity CLI (the `agy` command) is installed.
   4. The Anthropic Claude Code CLI (the `claude` command) is installed.
-  5. The kibitz package files are all present and the main script parses.
+  5. The Cursor CLI (the `agent` command) is installed.
+  6. The kibitz package files are all present and the main script parses.
 
-It does NOT check whether you are signed in to Codex, Antigravity, or Claude -
+It does NOT check whether you are signed in to any of them -
 that can only happen when you run them yourself the first time. The doctor
 confirms they are INSTALLED; you will confirm sign-in the first time you run
 them.
@@ -32,6 +33,7 @@ ROOT = Path(__file__).resolve().parent.parent
 WIN_CODEX_DIR = os.path.expandvars(r"%LOCALAPPDATA%\OpenAI\Codex")
 WIN_AGY_DIR = os.path.expandvars(r"%LOCALAPPDATA%\agy\bin")
 WIN_CLAUDE_DIR = os.path.expandvars(r"%USERPROFILE%\.local\bin")
+WIN_CURSOR_DIR = os.path.expandvars(r"%LOCALAPPDATA%\cursor-agent")
 
 CODEX_HINT = (
     "Install Codex - Windows: powershell -ExecutionPolicy ByPass -c "
@@ -48,6 +50,34 @@ CLAUDE_HINT = (
     "Install Claude Code from Anthropic, then run `claude` once and sign in. "
     "On this Windows setup it is usually under %USERPROFILE%\\.local\\bin."
 )
+# The Cursor CLI is STANDALONE - the Cursor editor does NOT have to be installed.
+CURSOR_HINT = (
+    "Install the Cursor CLI (this is the CLI on its own; the Cursor editor is NOT "
+    "required) - Windows: powershell -c \"irm 'https://cursor.com/install?win32=true' "
+    "| iex\"  |  Mac/Linux/WSL: curl https://cursor.com/install -fsS | bash. "
+    "Then run `agent login` once and sign in."
+)
+
+
+# Cursor ships agent.cmd / agent.ps1, not an .exe, so the generic .exe search cannot
+# see it. "agent" is also a very generic name to take off PATH, so look in the install
+# directory FIRST and only fall back to PATH.
+CURSOR_LAUNCHERS = ("cursor-agent.cmd", "agent.cmd", "cursor-agent.exe", "agent.exe")
+
+
+def find_cursor(win_dir: str = WIN_CURSOR_DIR):
+    """Find the Cursor CLI launcher. Returns a path string, or None."""
+    base = Path(win_dir)
+    if base.is_dir():
+        for candidate in CURSOR_LAUNCHERS:
+            path = base / candidate
+            if path.is_file():
+                return str(path)
+    for name in ("cursor-agent", "agent"):
+        found = shutil.which(name)
+        if found and not is_windowsapps_alias(found):
+            return found
+    return None
 
 # The package files kibitz needs to run.
 REQUIRED_FILES = [
@@ -139,8 +169,18 @@ def main() -> int:
         print(f"            {CLAUDE_HINT}")
     print()
 
-    # --- 5. kibitz package files + script parse ----------------------------
-    print("[5] kibitz package files")
+    # --- 5. Cursor CLI -----------------------------------------------------
+    cursor_path = find_cursor()
+    print("[5] Cursor CLI (the `agent` command)")
+    if cursor_path:
+        print(f"    FOUND   {cursor_path}")
+    else:
+        print("    NOT FOUND")
+        print(f"            {CURSOR_HINT}")
+    print()
+
+    # --- 6. kibitz package files + script parse ----------------------------
+    print("[6] kibitz package files")
     missing = []
     for rel in REQUIRED_FILES:
         present = (ROOT / rel).is_file()
@@ -176,6 +216,7 @@ def main() -> int:
         "Codex": codex_path,
         "Antigravity": agy_path,
         "Claude Code": claude_path,
+        "Cursor": cursor_path,
     }
     installed_agents = [name for name, path in agent_paths.items() if path]
     missing_agents = [name for name, path in agent_paths.items() if not path]
@@ -186,25 +227,28 @@ def main() -> int:
     if ready:
         print("  RESULT: READY")
         print()
-        if agents_found == 3:
-            print("  Codex, Antigravity, and Claude Code are installed.")
-            print("  Driver-aware defaults are ready.")
+        if agents_found == 4:
+            print("  Codex, Antigravity, Claude Code, and Cursor are installed.")
+            print("  Driver-aware defaults are ready: a round runs all four lanes")
+            print("  MINUS whichever one is driving, so a host never reviews itself.")
         else:
             print(f"  Installed agents: {', '.join(installed_agents)}")
             print(f"  Missing agents: {', '.join(missing_agents)}")
             if codex_path and claude_path and not agy_path:
                 print("  Antigravity is missing or out of quota; use:")
-                print("    --only codex --only claude")
+                print("    --only codex --only claude" + (" --only cursor" if cursor_path else ""))
+            elif cursor_path and not codex_path and not agy_path:
+                print("  You can fill a missing seat with the Cursor lane: `--only cursor`.")
             elif claude_path and not codex_path and not agy_path:
                 print("  You can run a Claude-only lane with `--only claude`.")
             else:
                 print("  Use repeated `--only` flags for whichever installed agents you want.")
         print()
-        print("  Last step: the first time you run `codex`, `agy`, or `claude`,")
-        print("  sign in when they ask. Then point your driver at a plan and say")
-        print("  'run kibitz'.")
+        print("  Last step: the first time you run `codex`, `agy`, `claude`, or")
+        print("  `agent`, sign in when they ask. Then point your driver at a plan")
+        print("  and say 'run kibitz'.")
         print("  If host auto-detection misses, pass --driver codex, --driver claude,")
-        print("  --driver agy, or set KIBITZ_DRIVER.")
+        print("  --driver agy, --driver cursor, or set KIBITZ_DRIVER.")
         rc = 0
     else:
         print("  RESULT: NOT READY YET")
@@ -219,8 +263,8 @@ def main() -> int:
             if not parse_ok:
                 print(f"    - Python entrypoint parse failed: {'; '.join(parse_errs)}")
         if agents_found == 0:
-            print("    - Install at least one agent (Codex, Antigravity, or Claude Code;")
-            print("      all three gives the fullest panel). See the hints above.")
+            print("    - Install at least one agent (Codex, Antigravity, Claude Code,")
+            print("      or Cursor; all four gives the fullest panel). See the hints above.")
         rc = 1
     print("=" * 64)
     return rc

@@ -5,10 +5,12 @@
 your local agent flow, with this little skill.
 
 Here's the trick: they don't just read a snippet you paste in. Your active driver
-(Claude, Codex, Antigravity, or another supported host) writes its own grounded
-anchor review, then Kibitz fans out to the other local reviewer lanes. The current
-lanes are Codex, Antigravity, and Claude Code, but the design goal is model-family
-diversity rather than loyalty to any one brand. Each lane reads your *whole* repo
+(Claude, Codex, Antigravity, Cursor, or another supported host) writes its own
+grounded anchor review, then Kibitz fans out to the other local reviewer lanes. The
+current lanes are Codex (GPT), Antigravity (Gemini), Claude Code (Claude), and
+Cursor (Grok) -- one model family each, because the design goal is model-family
+diversity rather than loyalty to any one brand. A driver never reviews itself, so a
+round runs the other three. Each lane reads your *whole* repo
 on your machine, critiques your plan, and then the active driver checks everything
 they say against your real code and throws out anything that isn't true. A real
 multi-system second opinion that can't bluff, because they actually read the code.

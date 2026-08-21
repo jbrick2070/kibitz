@@ -16,6 +16,7 @@ CLI flags, the model-selection policy, and the tool versions this was proven on.
 | Codex CLI (`codex`) | `0.142.5`, running model `gpt-5.5` | `codex exec` non-interactive mode |
 | Antigravity (`agy`) | `1.0.16`, `1.1.5` | no `--headless`, no `--approve`; `agy models` is available for preflight |
 | Claude Code (`claude`) | `2.1.72` | `claude -p` non-interactive mode |
+| Cursor CLI (`agent`) | `2026.08.11-e8db854` | `agent -p` non-interactive; **prompt on STDIN**, review from STDOUT; standalone - the Cursor editor is NOT required |
 | GitHub CLI (`gh`) | `2.89` | optional; only if you script repo setup |
 
 These are the versions the invocations below were verified against. Newer
@@ -29,14 +30,15 @@ before it spends an agent call:
 - Codex: `codex login status`
 - Antigravity: `agy models`, plus recent Antigravity CLI logs
 - Claude Code: `claude auth status`
+- Cursor: `agent status --format text`
 
 The preflight writes `<agent>_quota_status.txt` in the run folder. If Kibitz has
 a real usage percentage, it warns at the configured thresholds (default
 `KIBITZ_QUOTA_WARN_THRESHOLDS=50,70,90`) and appends to `quota_warnings.md`.
 Current Codex, Antigravity, and Claude Code status surfaces do not reliably
 expose usage percentages, so threshold warnings also accept explicit environment
-overrides: `KIBITZ_CODEX_USAGE_PERCENT`, `KIBITZ_AGY_USAGE_PERCENT`, and
-`KIBITZ_CLAUDE_USAGE_PERCENT`.
+overrides: `KIBITZ_CODEX_USAGE_PERCENT`, `KIBITZ_AGY_USAGE_PERCENT`,
+`KIBITZ_CLAUDE_USAGE_PERCENT`, and `KIBITZ_CURSOR_USAGE_PERCENT`.
 
 Hard provider markers such as `RESOURCE_EXHAUSTED`, `code 429`, `check quota`,
 `Individual quota reached`, `rate limit`, or `out of credits` are handled
@@ -45,10 +47,14 @@ differently. Kibitz annotates the failed `<agent>.md`, writes
 retry window. Default retry window is `KIBITZ_QUOTA_RETRY_AFTER=1h`; examples:
 `30m`, `4h`, `1d`.
 
-For recent Antigravity CLI log markers, Kibitz blocks that lane by default
-instead of immediately burning another hanging attempt. Override with
-`KIBITZ_QUOTA_BLOCK_ON_RECENT=0` only when you intentionally want to force a
-fresh call.
+A quota marker in a recent Antigravity CLI log WARNS but does **not** block the
+lane. Antigravity hits 429s internally, retries and succeeds: one log from a run
+that produced a complete 7.6 KB review carried five `RESOURCE_EXHAUSTED` markers
+and four `code 429`. So a log marker is evidence about the provider's rate
+limiter, not evidence that this call will fail, and blocking on it costs a whole
+reviewer seat for a lane that would have answered. Set
+`KIBITZ_QUOTA_BLOCK_ON_RECENT=1` to restore blocking. Direct evidence still
+blocks: the agent's own output is read to see whether THIS call actually died.
 
 ## Codex
 
@@ -211,28 +217,109 @@ claude -p \
 - When `agy` is out of quota, the practical fallback is `--only claude` or
   `--only codex --only claude`.
 
+## Cursor (`agent`)
+
+Invocation (one review, READ-ONLY, prompt on stdin, review from stdout):
+
+```
+agent -p --trust --mode ask --output-format text --model <id>
+        # ...with the PROMPT written to the process's STDIN, never as an argument
+```
+
+**The best-postured lane of the four.** `--mode ask` is read-only and has no write
+tool, so Cursor needs no `--force`, no `--yolo`, and no skip-permissions flag. It is
+the only lane that cannot modify your repo even in principle.
+
+### The 8191-character wall - do not undo this
+
+**The prompt MUST be fed on stdin.** On Windows `agent.cmd` re-invokes PowerShell
+through `cmd.exe`, whose command line is capped at 8191 characters. A real kibitz
+round prompt (round text + profiles + grounding footer) runs past 10,000. Passed as
+an argv element it fails in 0.1 s with:
+
+```
+The command line is too long.
+```
+
+rc=1, empty stdout. Every short smoke test still passes, so this breaks only in
+production. `run_cursor` therefore sends the prompt on stdin, and falls back to
+calling `versions\<newest>\node.exe index.js` directly (pure CreateProcess, 32767
+limit) if stdin ever stops working.
+
+### `--trust` is mandatory
+
+Without it every headless run exits rc=1 with "Workspace Trust Required", on any
+drive, no matter how many times you have run there before. Kibitz passes `--trust`
+on every call, which is why it works on any repo on any drive **without writing
+trust records into your Cursor config**.
+
+### No FILE_OUTPUT_DIRECTIVE for this lane
+
+Cursor gets `STDOUT_OUTPUT_DIRECTIVE` instead. The file-handoff directive orders a
+Write and says "Do not rely on stdout" - on a lane whose write tool is blocked that
+manufactures a guaranteed false failure, where the agent hits the tool-health check,
+cannot write, dutifully reports that it cannot read the repository, and the leg is
+failed for a tool it was never given.
+
+### Cursor model policy
+
+Default `KIBITZ_CURSOR_MODEL=cursor-grok-4.6-high`. **Keep this on Grok.** Cursor
+serves roughly 200 model ids across GPT, Claude, Gemini, Grok, Kimi, GLM and
+Composer - it is the most multi-model launcher of the four, which makes the
+one-family-per-seat rule matter more here, not less:
+
+| lane | family |
+|------|--------|
+| `codex` | GPT |
+| `antigravity` | Gemini |
+| `claude` | Claude |
+| `cursor` | **Grok** |
+
+Grok is the only family the other three cannot supply. Kimi K3 and GLM 5.2 are the
+defensible alternates; GPT / Claude / Gemini are not, because each duplicates a seat
+the panel already holds.
+
+`--check-pins` validates this id against the live `agent --list-models` catalog.
+Cursor's catalog is the largest and fastest-moving of the four, so this pin is the
+most likely to rot. `auto` never rots but surrenders family control, so it is
+deliberately not the default.
+
+**Privacy:** every `claude-fable-5-*` id in Cursor's catalog is labelled
+**(NO ZDR)** - no zero data retention. Do not select one as a silent default; that
+is a privacy change, not just a model change.
+
 ## Driver-aware selection
 
 The script separates the **active driver** from the external reviewer agents.
 The driver writes the anchor review and does synthesis; the script fans out to
 the other systems by default.
 
+**THE HOST BOUNDARY:** a driver never reviews itself. If Codex is driving, the
+`codex` CLI is not a second opinion - it is the same system grading its own
+homework, and the same is true of agy driving agy, Claude driving Claude, and
+Cursor driving Cursor. The default panel is therefore **all four lanes MINUS the
+detected driver**.
+
 ```
 python scripts/kibitz.py --doc plan.md --round r1 --driver auto
 python scripts/kibitz.py --doc plan.md --round r1 --driver codex
 python scripts/kibitz.py --doc plan.md --round r1 --driver claude
 python scripts/kibitz.py --doc plan.md --round r1 --driver agy
+python scripts/kibitz.py --doc plan.md --round r1 --driver cursor
 python scripts/kibitz.py --doc plan.md --round r1 --driver none
 ```
 
 - `--driver auto` is the default. It first honors `KIBITZ_DRIVER`; then it looks
   for known host environment hints. Codex Desktop is detected via
-  `CODEX_SHELL` / `CODEX_THREAD_ID` / `CODEX_INTERNAL_ORIGINATOR_OVERRIDE`.
-- `--driver codex` runs Antigravity + Claude Code.
-- `--driver claude` runs Codex + Antigravity.
-- `--driver agy` / `--driver antigravity` runs Codex + Claude Code.
-- `--driver none` means standalone/full panel and runs all three agents.
-- `--all-agents` also runs all three, ignoring the detected driver.
+  `CODEX_SHELL` / `CODEX_THREAD_ID` / `CODEX_INTERNAL_ORIGINATOR_OVERRIDE`;
+  Cursor via `CURSOR_AGENT` / `CURSOR_CONVERSATION_ID` / `CURSOR_INVOKED_AS`.
+- `--driver codex` runs Antigravity + Claude Code + Cursor.
+- `--driver claude` runs Codex + Antigravity + Cursor.
+- `--driver agy` / `--driver antigravity` runs Codex + Claude Code + Cursor.
+- `--driver cursor` runs Codex + Antigravity + Claude Code.
+- `--driver none` means standalone/full panel and runs all four agents.
+- `--all-agents` also runs all four, ignoring the detected driver. That CAN make
+  a host review itself, so use it deliberately.
 - Repeated `--only` flags override driver-aware selection entirely.
 - `--dry-run` prints the selected driver/reviewer set and exits before any agent
   call.

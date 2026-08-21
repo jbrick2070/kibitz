@@ -2,16 +2,18 @@
 """smoke_test.py - offline package check for the kibitz skill.
 
 Verifies the package is structurally sound WITHOUT calling Codex, Antigravity,
-or Claude:
+Claude, or Cursor:
   (a) the expected file tree exists,
   (b) scripts/kibitz.py is valid Python (AST parse),
-  (c) `codex`, `agy`, and `claude` availability on PATH is reported
-      (soft warning, not a failure).
+  (c) `codex`, `agy`, `claude` and the Cursor CLI availability is reported
+      (soft warning, not a failure). Cursor is looked up in its install
+      directory as well as on PATH, because it is not placed on PATH.
 
 Exit 0 if the tree + parse pass; exit 1 otherwise. Python standard library only.
 """
 from __future__ import annotations
 import ast
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -62,9 +64,25 @@ def check_parse() -> Optional[str]:
     return None
 
 
+#: Cursor installs agent.cmd here and does NOT put it on PATH, so a which()-only
+#: probe reports it missing on a machine where it is installed and working. The
+#: Cursor EDITOR is not involved -- the CLI is standalone.
+WIN_CURSOR_DIR = os.path.expandvars(r"%LOCALAPPDATA%\cursor-agent")
+CURSOR_LAUNCHERS = ("cursor-agent.cmd", "agent.cmd", "cursor-agent.exe", "agent.exe")
+
+
+def _cursor_present() -> bool:
+    base = Path(WIN_CURSOR_DIR)
+    if base.is_dir() and any((base / c).is_file() for c in CURSOR_LAUNCHERS):
+        return True
+    return any(shutil.which(n) is not None for n in ("cursor-agent", "agent"))
+
+
 def check_agents() -> Dict[str, bool]:
-    """Soft check: is each agent CLI on PATH? Reported, never fatal."""
-    return {name: shutil.which(name) is not None for name in ("codex", "agy", "claude")}
+    """Soft check: is each agent CLI available? Reported, never fatal."""
+    found = {name: shutil.which(name) is not None for name in ("codex", "agy", "claude")}
+    found["cursor"] = _cursor_present()
+    return found
 
 
 def main() -> int:
@@ -91,8 +109,8 @@ def main() -> int:
         print(f"    FAILED  {parse_err}")
     parse_ok = parse_err is None
 
-    # (c) agents on PATH (soft warning)
-    print("\n[3] agent CLIs on PATH (informational, not a gate)")
+    # (c) agent CLIs available (soft warning)
+    print("\n[3] agent CLIs available (informational, not a gate)")
     for name, present in check_agents().items():
         print(f"    {'AVAILABLE' if present else 'MISSING':>9}  {name}")
 

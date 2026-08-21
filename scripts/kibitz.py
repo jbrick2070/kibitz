@@ -2,16 +2,24 @@
 """kibitz.py - local-agent fan-out for the kibitz skill (FILE-HANDOFF contract).
 
 Fans ONE hardening pass out to local file-reading CLI agents - Codex
-(`codex exec`), Antigravity (`agy`), and Claude Code (`claude -p`). Each reads
-your REAL repo on its own and returns an independent review. No API key, no
-copy-paste. Python standard library only: no pip install, no third-party
-dependencies.
+(`codex exec`), Antigravity (`agy`), Claude Code (`claude -p`), and Cursor
+(`agent -p`). Each reads your REAL repo on its own and returns an independent
+review. No API key, no copy-paste. Python standard library only: no pip install,
+no third-party dependencies.
 
-The default panel is driver-aware: if Claude is driving, run Codex + Antigravity;
-if Codex is driving, run Antigravity + Claude; if Antigravity is driving, run
-Codex + Claude. If no driver is detected, run all three agents. Use `--driver`
-or `KIBITZ_DRIVER` to make the driver explicit, and repeated `--only` flags for
-manual fallbacks. `--only agy` is accepted as an alias for `--only antigravity`.
+ONE FAMILY PER SEAT: codex=GPT, agy=Gemini, claude=Claude, cursor=Grok. The point
+of the panel is four INDEPENDENT readings, so pointing a multi-model launcher at a
+family another lane already holds collapses its value. See the DIVERSITY RULE below.
+
+THE HOST BOUNDARY: a driver never reviews itself. If Codex is driving, the codex
+CLI is not a second opinion - it is the same system grading its own homework, and
+the same goes for agy driving agy, Claude driving Claude, and Cursor driving Cursor.
+So the default panel is driver-aware: it is all four lanes MINUS the detected
+driver. Driving from Claude/Cowork runs codex + antigravity + cursor; driving from
+Cursor runs codex + antigravity + claude. With no driver detected, all four run.
+Use `--driver` or `KIBITZ_DRIVER` to make the driver explicit, and repeated `--only`
+flags for manual fallbacks. `--only agy` is an alias for `--only antigravity`;
+`--only agent` and `--only cursor-agent` are aliases for `--only cursor`.
 
 This script does the fan-out ONLY. The driver (Claude, Codex, or another host)
 then writes its own code-grounded anchor review, verifies these agent reviews
@@ -31,6 +39,12 @@ to a known file:
     read-only-that-still-writes sandbox).
   * Claude: no native -o flag, so it uses the same file-handoff contract as
     Antigravity. The prompt is passed as an arg; Claude may write only <file>.
+  * Cursor: the odd one out, and the best-postured of the four. `--mode ask` is
+    genuinely read-only, so it CANNOT write a handoff file and does not need to:
+    its review is captured from STDOUT, which Cursor does not swallow. It needs
+    no --force and no skip-permissions. The prompt goes in on STDIN, because the
+    Windows launcher is a .cmd behind cmd.exe and a real round prompt is well past
+    cmd.exe's 8191-character ceiling.
 
 Usage:
   python kibitz.py --doc plan.md --round r2 --repo /path/to/repo
@@ -39,6 +53,7 @@ Usage:
   python kibitz.py --doc plan.md --round r2 --repo /path/to/repo --driver none
   python kibitz.py --doc plan.md --round r3 --only codex --only claude
   python kibitz.py --doc plan.md --round r3 --only agy
+  python kibitz.py --doc plan.md --round r3 --only cursor
   python kibitz.py --doc plan.md --round r3 --only claude
   python kibitz.py --doc plan.md --round r3 --driver codex --dry-run
   python kibitz.py "harden the ending-mode plan" --round r1
@@ -49,7 +64,13 @@ Configuration is via CLI args and environment variables only -- no hardcoded pat
   KIBITZ_CODEX_MODEL      Codex model slug pin, validated against the live catalog
                           (e.g. "gpt-5.6-sol"; "" = auto-pick strongest). A slug the
                           catalog does not list warns and falls back rather than failing.
-  KIBITZ_AGY_MODEL        Antigravity picker display name (default "Gemini 3.6 Flash (High)"; "" = agy default).
+  KIBITZ_AGY_MODEL        Antigravity picker display name (default "Gemini 3.7 Flash (High)"; "" = agy default).
+  KIBITZ_CURSOR_MODEL     Cursor model id (default "cursor-grok-4.6-high"; "" = cursor default).
+                          Keep this on GROK -- see the DIVERSITY RULE.
+  KIBITZ_CURSOR_MODE      Cursor execution mode, ask or plan (default "ask"). Both are
+                          read-only; the lane never gets write access.
+  KIBITZ_CURSOR_BIN       Directory holding the Cursor launcher. Overrides the default
+                          %LOCALAPPDATA%\\cursor-agent lookup and PATH.
   KIBITZ_CLAUDE_BUDGET    Claude spend tier: low, medium, high, or plan (default "medium").
   KIBITZ_CLAUDE_MODEL     Claude model alias/slug override ("" = Claude default).
   KIBITZ_CLAUDE_EFFORT    Claude effort override (low/medium/high/max; "" = Claude default).
@@ -66,7 +87,8 @@ Configuration is via CLI args and environment variables only -- no hardcoded pat
   KIBITZ_<AGENT>_USAGE_PERCENT
                            Optional explicit usage percent for codex, agy, or claude.
 
-SAFETY: Codex runs read-only (hard guarantee). Antigravity runs UNSANDBOXED
+SAFETY: Codex and Cursor run read-only (hard guarantee: Cursor's ask mode has no
+write tool, and the lane passes neither --force nor --yolo). Antigravity runs UNSANDBOXED
 (--dangerously-skip-permissions) because the file-handoff needs write approval; it is
 gated by a strict review-only prompt directive, and your repo is git-committed so any
 stray edit shows in `git status` and is revertible. Claude also uses
@@ -101,6 +123,10 @@ PER_AGENT_TIMEOUT = None
 _WIN_CODEX_BIN = os.path.expandvars(r"%LOCALAPPDATA%\OpenAI\Codex\bin")
 _WIN_AGY_BIN = os.path.expandvars(r"%LOCALAPPDATA%\agy\bin")
 _WIN_CLAUDE_BIN = os.path.expandvars(r"%USERPROFILE%\.local\bin")
+# Cursor ships the CLI as agent.cmd/.ps1 in this directory, with the real payload under
+# versions/<YYYY.MM.DD-hash>/. The CLI is standalone: the Cursor EDITOR does not have to
+# be installed, and on this machine never was.
+_WIN_CURSOR_BIN = os.path.expandvars(r"%LOCALAPPDATA%\cursor-agent")
 
 
 def _is_windowsapps_alias(path: str) -> bool:
@@ -127,6 +153,49 @@ def _which(name: str, *extra_dirs: str):
     if exe:
         return exe
     return None
+
+
+#: Cursor's launcher is agent.cmd / agent.ps1 -- NOT an .exe, so the generic
+#: _extra_candidates rglob (which only looks for name + ".exe") cannot find it.
+#: "agent" is also a dangerously generic name to take off PATH, so the install
+#: directory is searched FIRST and a bare PATH hit is only a last resort.
+_CURSOR_LAUNCHERS = ("cursor-agent.cmd", "agent.cmd", "cursor-agent.exe", "agent.exe")
+
+
+def _which_cursor(extra_dir: str = ""):
+    """Resolve the Cursor CLI launcher.
+
+    Order: KIBITZ_CURSOR_BIN, then the known install directory, then PATH. The
+    install directory beats PATH because "agent" is a dangerously generic name to
+    pick up from PATH; KIBITZ_CURSOR_BIN beats both so a non-standard install -- or
+    an offline test stub -- can point this lane wherever it needs to go.
+    """
+    for base in (Path(os.environ.get("KIBITZ_CURSOR_BIN", "").strip() or "."),
+                 Path(extra_dir or _WIN_CURSOR_BIN)):
+        if str(base) == "." or not base.is_dir():
+            continue
+        for candidate in _CURSOR_LAUNCHERS:
+            path = base / candidate
+            if path.is_file():
+                return str(path)
+    for name in ("cursor-agent", "agent"):
+        found = shutil.which(name)
+        if found and not _is_windowsapps_alias(found):
+            return found
+    return None
+
+
+#: The prompt is fed to Cursor on STDIN, never as an argv element. Cursor's Windows
+#: launcher is a .cmd that re-invokes PowerShell through cmd.exe, whose command line is
+#: capped at 8191 characters -- and a real kibitz round prompt (round text + profiles +
+#: grounding footer) runs past 10,000. Passing it as an argument fails instantly with
+#: "The command line is too long." while every short smoke test still passes, which is
+#: exactly how this would have shipped broken. Proven 2026-08-21: argv -> rc=1 in 0.1s;
+#: stdin -> rc=0 with a 10,110-byte review.
+CURSOR_PROMPT_ON_STDIN = True
+
+#: Matches "cursor-grok-4.6-high" / "gemini-3.1-pro" style ids from `agent --list-models`.
+_CURSOR_MODEL_LINE = re.compile(r"^\s*(?P<slug>[a-z0-9][a-z0-9.\-]*)\s+-\s+(?P<name>.+?)\s*$")
 
 
 # Codex model + reasoning policy: poll the LIVE catalog via `codex debug models`, prefer the
@@ -194,10 +263,12 @@ CODEX_MODEL_PREFERENCE = ("gpt-5.6-sol", "gpt-5.5", "gpt-5-codex", "gpt-5")
 # Give each lane its OWN --topic, or the second overwrites the first's review.
 #
 # DIVERSITY RULE (do NOT casually change): agy is MULTI-MODEL -- it can run Gemini AND
-# claude-opus / claude-sonnet / gpt-oss. Keep agy on GEMINI: Codex is GPT-family
-# and Claude Code can supply the Claude-family lane, so agy=Gemini gives three
-# DISTINCT model families; agy=Opus duplicates Claude and agy=gpt-oss duplicates
-# Codex, collapsing the panel's whole value.
+# claude-opus / claude-sonnet / gpt-oss. Keep agy on GEMINI. With four lanes the
+# families must stay one-per-seat:
+#     codex = GPT      agy = Gemini      claude = Claude      cursor = Grok
+# agy=Opus duplicates Claude, agy=gpt-oss duplicates Codex, and a cursor lane pointed
+# at Codex 5.3 or Claude Opus 5 duplicates two seats at once -- each collapses the
+# panel's whole value, which is FOUR independent readings of the same code.
 AGY_MODEL = os.environ.get("KIBITZ_AGY_MODEL", "Gemini 3.7 Flash (High)")
 # A PRINT TIMEOUT IS NOT A QUOTA BLOCK (2026-08-17). `--timeout` on this script
 # does NOT reach agy; this env var builds agy's own --print-timeout. The Pro lane
@@ -205,6 +276,28 @@ AGY_MODEL = os.environ.get("KIBITZ_AGY_MODEL", "Gemini 3.7 Flash (High)")
 # landed first try at 15m, while `agy models` returned rc=0 throughout -- so read
 # the error before declaring a lane exhausted.
 AGY_PRINT_TIMEOUT = os.environ.get("KIBITZ_AGY_PRINT_TIMEOUT", "15m")
+
+# Cursor is the MOST multi-model launcher of the four -- `agent --list-models` returns
+# roughly 200 ids spanning GPT, Claude, Gemini, Grok, Kimi, GLM and Composer. That makes
+# the DIVERSITY RULE above matter MORE here, not less: this seat is Grok, because Grok is
+# the only family the other three lanes cannot supply. Kimi K3 and GLM 5.2 are the
+# defensible alternates if Grok is ever unavailable; GPT / Claude / Gemini are NOT, since
+# each duplicates a seat the panel already holds.
+#
+# The pinned slug WILL rot -- Cursor's catalog is the largest and fastest-moving here, and
+# this repo has already been bitten twice by stale pins that silently downgraded every
+# arc. `--check-pins` validates this one against the live catalog for exactly that reason.
+# `auto` exists and never rots, but it surrenders family control and would quietly break
+# the diversity rule, so it is deliberately NOT the default.
+#
+# PRIVACY: every claude-fable-5-* id in Cursor's catalog is labelled "(NO ZDR)" -- no zero
+# data retention. Do not select one as a silent default; it is a privacy change, not just
+# a model change.
+CURSOR_MODEL = os.environ.get("KIBITZ_CURSOR_MODEL", "cursor-grok-4.6-high").strip()
+#: Read-only review posture. `ask` is Q&A-style and read-only, and is the mode actually
+#: proven on this platform; `plan` is also read-only but untested here. Neither can edit,
+#: so the lane never needs --force / --yolo and never gets write access at all.
+CURSOR_MODE = os.environ.get("KIBITZ_CURSOR_MODE", "ask").strip()
 CLAUDE_BUDGET = os.environ.get("KIBITZ_CLAUDE_BUDGET", "medium").strip().lower()
 CLAUDE_MODEL_ENV = os.environ.get("KIBITZ_CLAUDE_MODEL")
 CLAUDE_EFFORT_ENV = os.environ.get("KIBITZ_CLAUDE_EFFORT")
@@ -276,6 +369,7 @@ AGENT_LABELS = {
     "codex": "Codex",
     "antigravity": "Antigravity",
     "claude": "Claude",
+    "cursor": "Cursor",
 }
 
 
@@ -342,6 +436,66 @@ def agy_pin_warnings(exe: str) -> list[str]:
             f"or update the default in this script."
         )
     return warnings
+
+
+def _cursor_catalog(exe: str) -> list[tuple[str, str]]:
+    """(slug, display_name) pairs from `agent --list-models`. [] if unreadable."""
+    try:
+        proc = subprocess.run([exe, "--list-models"], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=90)
+    except Exception:  # noqa: BLE001
+        return []
+    pairs = []
+    for line in (proc.stdout or "").splitlines():
+        match = _CURSOR_MODEL_LINE.match(line)
+        if match:
+            pairs.append((match.group("slug"), match.group("name")))
+    return pairs
+
+
+#: Splits "cursor-grok-4.6-high" into ("cursor-grok", 4.6, "high") so a pin is only
+#: compared against its OWN family and effort lane -- a Grok High pin is not stale
+#: because a Gemini exists, or because a Grok Low is newer.
+_CURSOR_SLUG = re.compile(r"^(?P<family>[a-z][a-z0-9-]*?)-(?P<ver>\d+(?:\.\d+)?)-(?P<lane>[a-z0-9-]+)$")
+
+
+def cursor_pin_warnings(exe: str) -> list[str]:
+    """Warn when the configured Cursor pin is invalid or a generation behind.
+
+    Cursor's catalog is the largest and fastest-moving of the four lanes, so this pin
+    is the most likely of them to rot. Like the agy check this WARNS and never blocks:
+    a stale pin still returns a real review, and killing the run would cost the seat.
+    An INVALID pin is the one that actually breaks a leg, so it is reported first.
+    """
+    catalog = _cursor_catalog(exe)
+    if not catalog or not CURSOR_MODEL:
+        return []
+    slugs = [slug for slug, _display in catalog]
+    if CURSOR_MODEL not in slugs:
+        sample = ", ".join(s for s in slugs if s.startswith("cursor-grok"))[:160]
+        return [f"KIBITZ_CURSOR_MODEL={CURSOR_MODEL!r} is not in `agent --list-models`; "
+                f"the lane will fail on an invalid model. Grok ids available: "
+                f"{sample or '(none)'}"]
+    match = _CURSOR_SLUG.match(CURSOR_MODEL)
+    if not match:
+        return []
+    family, lane = match.group("family"), match.group("lane")
+    pinned_ver = float(match.group("ver"))
+    newest, newest_slug = pinned_ver, CURSOR_MODEL
+    for slug in slugs:
+        other = _CURSOR_SLUG.match(slug)
+        if not other:
+            continue
+        if other.group("family") != family or other.group("lane") != lane:
+            continue
+        ver = float(other.group("ver"))
+        if ver > newest:
+            newest, newest_slug = ver, slug
+    if newest > pinned_ver:
+        return [f"cursor pin is a generation behind: using {CURSOR_MODEL!r} while "
+                f"{newest_slug!r} is available. Set KIBITZ_CURSOR_MODEL to refresh, "
+                f"or update the default in this script."]
+    return []
 
 
 def report_pin_freshness(exe: str, run_dir: "Path | None" = None) -> list[str]:
@@ -491,6 +645,36 @@ structure specified above) to this exact path, then stop:
 Do not rely on stdout. After writing the file, exit immediately.
 """
 
+# Cursor runs in a read-only mode that CANNOT write, so it gets the same tool-health
+# gate with the opposite output channel. Do NOT hand this lane FILE_OUTPUT_DIRECTIVE:
+# that directive orders a Write and says "Do not rely on stdout", so on a lane whose
+# write tool is blocked it manufactures a guaranteed false failure -- the agent hits the
+# health check, cannot write, dutifully emits "I cannot read the repository", and the
+# leg is failed for a tool it was never given. Granting --force to satisfy the
+# convention would be strictly worse: it trades a read-only reviewer for a writable one
+# to no benefit. The collector already falls back to stdout, so nothing else changes.
+STDOUT_OUTPUT_DIRECTIVE = """
+
+------------------------------------------------------------------
+TOOL HEALTH CHECK (DO THIS FIRST): Before reviewing anything, confirm your own file tools
+actually work. Open ONE real source file in the repo under review and confirm you can read its
+contents. If ANY tool call fails, errors, is blocked, or returns nothing -- STOP. Do not write a
+review. Instead print ONLY this, with the error text quoted verbatim:
+  TOOL CHECK: FAIL
+  <the verbatim error>
+  I cannot read the repository.
+A refusal is a USEFUL answer and costs the driver nothing. A review written without file access
+is WORSE THAN NO ANSWER, because it looks like evidence and gets folded into a plan. NEVER pad a
+report to keep its shape. If you cannot trace a step, write "UNTRACED -- could not follow". An
+honest gap is worth more than a smooth chain, and placeholder filler FAILS the leg automatically.
+
+OUTPUT CONTRACT (MANDATORY): You are a READ-ONLY reviewer and you have NO write tool. Do NOT
+attempt to create, modify, or delete any file, and do not ask for permission to do so. Print your
+COMPLETE review -- only the review, in the structure specified above -- to STDOUT, then exit
+immediately. Your stdout IS the deliverable: no preamble, no trailing commentary, no summary of
+what you just wrote.
+"""
+
 
 def write_process_log(log_file: Path, stdout_text: str, stderr_text: str, extra: str = "") -> None:
     chunks = []
@@ -575,6 +759,7 @@ def usage_percent_from_env(agent: str):
             "KIBITZ_AGY_QUOTA_PERCENT",
         ),
         "claude": ("KIBITZ_CLAUDE_USAGE_PERCENT", "KIBITZ_CLAUDE_QUOTA_PERCENT"),
+        "cursor": ("KIBITZ_CURSOR_USAGE_PERCENT", "KIBITZ_CURSOR_QUOTA_PERCENT"),
     }
     for key in keys_by_agent.get(agent, ()):
         raw = os.environ.get(key)
@@ -772,6 +957,7 @@ def quota_preflight(agent: str, exe: str, repo: Path, run_dir: Path) -> str:
         "codex": [["login", "status"]],
         "antigravity": [["models"]],
         "claude": [["auth", "status"]],
+        "cursor": [["status", "--format", "text"]],
     }.get(agent, [])
     command_text = "\n".join(run_status_command(exe, args, repo) for args in commands)
     percent, percent_source = usage_percent_from_env(agent)
@@ -1222,12 +1408,133 @@ def run_claude(prompt: str, repo: Path, out_file: Path, log_file: Path) -> bool:
     return ok
 
 
-RUNNERS = {"codex": run_codex, "antigravity": run_agy, "claude": run_claude}
+#: Cursor's real payload lives in versions/<YYYY.MM.DD[-HH-MM-SS]-hash>/, the same layout
+#: its own launcher .ps1 parses. Only used for the argv fallback below.
+_CURSOR_VERSION_DIR = re.compile(r"^\d{4}\.\d{1,2}\.\d{1,2}(-\d{2}-\d{2}-\d{2})?-[a-f0-9]+$")
+
+
+def newest_cursor_version_dir(base: str = _WIN_CURSOR_BIN):
+    """Newest versions/<...>/ directory in a Cursor CLI install, or None."""
+    versions = Path(base) / "versions"
+    if not versions.is_dir():
+        return None
+    candidates = [d for d in versions.iterdir()
+                  if d.is_dir() and _CURSOR_VERSION_DIR.match(d.name)]
+    if not candidates:
+        return None
+
+    def key(directory: Path):
+        parts = directory.name.split("-")[0].split(".")
+        try:
+            return (int(parts[0]), int(parts[1]), int(parts[2]))
+        except (IndexError, ValueError):
+            return (0, 0, 0)
+
+    return max(candidates, key=key)
+
+
+def run_cursor(prompt: str, repo: Path, out_file: Path, log_file: Path) -> bool:
+    """Cursor CLI: READ-ONLY (--mode ask), prompt on STDIN, review captured from STDOUT.
+
+    The only lane of the four that needs no write access at all -- ask mode cannot edit,
+    so there is no --force, no --dangerously-skip-permissions, and no file-handoff.
+    --trust is required for every headless run: without it Cursor exits rc=1 with
+    "Workspace Trust Required" no matter which repo it is pointed at.
+    """
+    exe = _which_cursor()
+    if exe is None:
+        log_file.write_text(
+            r"cursor CLI not found: looked for agent.cmd / cursor-agent.cmd in "
+            r"%LOCALAPPDATA%\cursor-agent and for 'cursor-agent'/'agent' on PATH",
+            encoding="utf-8")
+        print("  x cursor: command not found")
+        return False
+    run_dir = out_file.parent
+    preflight_blocker = quota_preflight("cursor", exe, repo, run_dir)
+    if preflight_blocker:
+        record_failure_diagnostic("cursor", out_file, log_file, preflight_blocker)
+        print("  [FAILED] cursor (quota preflight)")
+        return False
+    if out_file.exists():
+        # Same reason the other lanes unlink: collect_review reads the FILE before
+        # stdout, so a stale review or a previous TOOL CHECK note would mask this
+        # run's real stdout answer.
+        out_file.unlink()
+
+    full = prompt + STDOUT_OUTPUT_DIRECTIVE
+    flags = ["-p", "--trust", "--mode", CURSOR_MODE, "--output-format", "text"]
+    if CURSOR_MODEL:
+        flags += ["--model", CURSOR_MODEL]
+    (run_dir / "cursor_model_selected.txt").write_text(
+        CURSOR_MODEL or "(cursor default)", encoding="utf-8")
+
+    # PRIMARY: prompt on stdin, so a >8191-char prompt never touches cmd.exe.
+    # FALLBACK: node + index.js directly, which is pure CreateProcess (32767 limit) and
+    # bypasses the launcher entirely. Wired as a live retry rather than a manual note,
+    # because stdin prompt-feeding is undocumented and a Cursor update could remove it.
+    attempts = [("stdin", [exe] + flags, full)]
+    vdir = newest_cursor_version_dir()
+    if vdir is not None:
+        node, index = vdir / "node.exe", vdir / "index.js"
+        if node.is_file() and index.is_file():
+            attempts.append(("node-argv", [str(node), str(index)] + flags + [full], None))
+
+    ok = False
+    proc = None
+    for label, cmd, stdin_text in attempts:
+        print(f"  -> cursor: model={CURSOR_MODEL or 'default'} mode={CURSOR_MODE} "
+              f"transport={label} read-only -> stdout")
+        receipt = (f"MODEL: {CURSOR_MODEL or '(cursor default)'}\n"
+                   f"MODE: {CURSOR_MODE}\n"
+                   f"TRANSPORT: {label}\n"
+                   f"ARGV (prompt omitted): {[c for c in cmd if c != full]!r}")
+        started_at = time.time()
+        try:
+            proc = subprocess.run(
+                cmd, cwd=str(repo), capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=PER_AGENT_TIMEOUT,
+                input=stdin_text,
+                stdin=None if stdin_text is not None else subprocess.DEVNULL,
+            )
+            write_process_log(log_file, proc.stdout or "", proc.stderr or "", extra=receipt)
+        except subprocess.TimeoutExpired as exc:
+            diagnostic = quota_diagnostic("cursor", started_at,
+                                          safe_text(exc.stdout), safe_text(exc.stderr))
+            record_failure_diagnostic("cursor", out_file, log_file, diagnostic)
+            print(f"  [FAILED] cursor (timeout after {PER_AGENT_TIMEOUT}s, {label})")
+            return False
+        ok = collect_review("cursor", out_file, log_file, proc.returncode, proc.stdout or "")
+        if ok:
+            break
+        if label != attempts[-1][0]:
+            print(f"  .. cursor {label} transport produced no review -> retrying via node")
+            if out_file.exists():
+                out_file.unlink()
+
+    if not ok and proc is not None:
+        diagnostic = quota_diagnostic("cursor", time.time(),
+                                      proc.stdout or "", proc.stderr or "")
+        if diagnostic:
+            record_failure_diagnostic("cursor", out_file, log_file, diagnostic)
+    rc = proc.returncode if proc is not None else "n/a"
+    print(f"  [{'OK' if ok else 'FAILED'}] cursor (rc={rc}, model={CURSOR_MODEL or 'default'})")
+    return ok
+
+
+RUNNERS = {
+    "codex": run_codex,
+    "antigravity": run_agy,
+    "claude": run_claude,
+    "cursor": run_cursor,
+}
 AGENT_ALIASES = {
     "codex": "codex",
     "antigravity": "antigravity",
     "agy": "antigravity",
     "claude": "claude",
+    "cursor": "cursor",
+    "cursor-agent": "cursor",
+    "agent": "cursor",
 }
 DRIVER_ALIASES = {
     **AGENT_ALIASES,
@@ -1239,8 +1546,15 @@ DRIVER_ALIASES = {
     "gemini": "antigravity",
     "cowork": "claude",
     "claude-code": "claude",
+    "grok": "cursor",
 }
-DEFAULT_RUNNERS = ["codex", "antigravity", "claude"]
+# THE HOST BOUNDARY, and it is the whole reason this list is filtered by driver:
+# a reviewer must be an INDEPENDENT reading of the code. If Codex is driving, the codex
+# CLI is not a second opinion -- it is the same system grading its own homework, and the
+# same is true of agy driving agy, Claude driving Claude, and Cursor driving Cursor.
+# main() removes the detected driver from this list, so with Claude driving from Cowork a
+# round runs codex + antigravity + cursor: three families, none of them the host.
+DEFAULT_RUNNERS = ["codex", "antigravity", "claude", "cursor"]
 
 
 def normalize_driver(raw):
@@ -1265,7 +1579,7 @@ def detect_driver():
             driver = normalize_driver(env_driver)
         except ValueError:
             sys.exit(f"ERROR: unknown KIBITZ_DRIVER={env_driver!r}; "
-                     f"use auto, none, codex, claude, antigravity, or agy")
+                     f"use auto, none, codex, claude, antigravity/agy, or cursor")
         if driver != "auto":
             return driver, "KIBITZ_DRIVER"
 
@@ -1276,13 +1590,19 @@ def detect_driver():
         return "antigravity", "Antigravity environment"
     if env.get("CLAUDECODE") or env.get("CLAUDE_CODE") or env.get("CLAUDE_DESKTOP"):
         return "claude", "Claude environment"
+    # Verified by asking the Cursor CLI to dump its own environment, 2026-08-21.
+    # Without this the host boundary silently breaks the moment cursor joins the
+    # default panel: a kibitz run driven from Cursor would launch the Cursor CLI as
+    # one of its own reviewers and call a self-review an independent opinion.
+    if env.get("CURSOR_AGENT") or env.get("CURSOR_CONVERSATION_ID") or env.get("CURSOR_INVOKED_AS"):
+        return "cursor", "Cursor environment"
     return None, "standalone"
 
 
 def main() -> None:
     global PER_AGENT_TIMEOUT
     ap = argparse.ArgumentParser(
-        description="kibitz local-agent fan-out (driver-aware Codex/Antigravity/Claude)")
+        description="kibitz local-agent fan-out (driver-aware Codex/Antigravity/Claude/Cursor)")
     ap.add_argument("problem", nargs="?", help="the plan / problem text to harden")
     ap.add_argument("--doc", help="path to an existing plan .md (instead of inline text)")
     ap.add_argument("--round", choices=["r1", "r2", "r3", "r4"], default="r1")
@@ -1293,13 +1613,16 @@ def main() -> None:
                          "repeatable. A repo-local .kibitz/comfyui.local.md auto-adds comfyui.")
     ap.add_argument("--no-profiles", action="store_true",
                     help="disable requested profiles and .kibitz/comfyui.local.md auto-detection.")
-    ap.add_argument("--only", action="append", metavar="{codex,antigravity,agy,claude}",
+    ap.add_argument("--only", action="append",
+                    metavar="{codex,antigravity,agy,claude,cursor}",
                     help="run only this agent (repeatable). Overrides driver-aware defaults.")
     ap.add_argument("--driver", default="auto",
-                    metavar="{auto,none,codex,claude,antigravity,agy}",
-                    help="active driver to exclude from default reviewers. Default: auto.")
+                    metavar="{auto,none,codex,claude,antigravity,agy,cursor}",
+                    help="active driver to exclude from default reviewers. A host never "
+                         "reviews itself. Default: auto.")
     ap.add_argument("--all-agents", action="store_true",
-                    help="run codex + antigravity + claude, ignoring detected driver.")
+                    help="run codex + antigravity + claude + cursor, ignoring the detected "
+                         "driver. This CAN make a host review itself -- use deliberately.")
     ap.add_argument("--with-claude", action="store_true",
                     help="compatibility flag: include Claude even if the driver-aware default excludes it.")
     ap.add_argument("--dry-run", action="store_true",
@@ -1323,6 +1646,19 @@ def main() -> None:
             print(f"  [PIN] configured antigravity lane: {AGY_MODEL!r}")
             if not report_pin_freshness(agy_exe):
                 print("  [PIN] antigravity pin is current.")
+        cursor_exe = _which_cursor()
+        if not cursor_exe:
+            print("  [PIN] cursor CLI not found; skipping the cursor pin check.")
+        else:
+            print(f"  [PIN] configured cursor lane: {CURSOR_MODEL!r}")
+            try:
+                cursor_warnings = cursor_pin_warnings(cursor_exe)
+            except Exception as exc:  # pragma: no cover - a check must never break a run
+                cursor_warnings = [f"cursor pin check skipped ({type(exc).__name__}: {exc})"]
+            for warning in cursor_warnings:
+                print(f"  [PIN] {warning}")
+            if not cursor_warnings:
+                print("  [PIN] cursor pin is current.")
         print(f"  [PIN] codex preference order: {', '.join(CODEX_MODEL_PREFERENCE)}")
         print("  [PIN] claude lane uses ALIASES (haiku/sonnet/opus), which do "
               "not rot -- nothing to refresh.")
@@ -1352,7 +1688,7 @@ def main() -> None:
         explicit_driver = normalize_driver(args.driver)
     except ValueError:
         ap.error(f"unknown driver: {args.driver} "
-                 f"(choose auto, none, codex, claude, antigravity/agy)")
+                 f"(choose auto, none, codex, claude, antigravity/agy, cursor)")
     driver = detected_driver if explicit_driver == "auto" else explicit_driver
 
     if args.only:
@@ -1361,7 +1697,7 @@ def main() -> None:
             name = AGENT_ALIASES.get(raw_name.lower())
             if name is None:
                 ap.error(f"unknown agent for --only: {raw_name} "
-                         f"(choose codex, antigravity/agy, or claude)")
+                         f"(choose codex, antigravity/agy, claude, or cursor)")
             if name not in selected:
                 selected.append(name)
     elif args.all_agents:
@@ -1434,6 +1770,19 @@ if __name__ == "__main__":
 #    The `| clip` clipboard bypass does NOT work (still a stdout redirect = empty).
 #  - Claude: `claude -p` has no native -o flag, so it uses the same file-handoff
 #    pattern as agy. Prompt is passed as an arg.
+#  - Cursor: `agent -p --trust --mode ask --model <id> --output-format text`, with the
+#    PROMPT ON STDIN and the review read from STDOUT.
+#      * --trust is MANDATORY headless. Without it every run exits rc=1 with
+#        "Workspace Trust Required", on any drive, however many times you have run it
+#        before. It is also all that is needed -- no trust records are written to the
+#        user's Cursor config.
+#      * THE PROMPT MUST NOT BE AN ARGV ELEMENT. agent.cmd re-invokes PowerShell through
+#        cmd.exe (8191-char ceiling) and a real round prompt exceeds 10,000. As argv it
+#        dies in 0.1s with "The command line is too long." -- while every short smoke
+#        test still passes, which is exactly how this ships broken. Proven 2026-08-21.
+#      * Do NOT give this lane FILE_OUTPUT_DIRECTIVE. Ask mode has no write tool, so a
+#        directive ordering a file write manufactures a guaranteed false failure.
+#      * The Cursor EDITOR is NOT required. The CLI is standalone.
 #  - Never scrape terminal output for DONE/FINISHED. Never set a short subprocess timeout
 #    unless you explicitly want to bail on a hung agent (use --timeout for that).
 # ---------------------------------------------------------------------------

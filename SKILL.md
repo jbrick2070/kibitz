@@ -2,15 +2,15 @@
 name: kibitz
 description: >-
   Harden plans, sprint plans, specs, and architecture docs with independent
-  local file-reading reviews from Codex, Antigravity, and Claude Code. The
-  active UI driver writes a code-grounded anchor, excludes its own duplicate CLI
-  lane, verifies every reviewer claim against the real repo, and acts as sole
+  local file-reading reviews from Codex, Antigravity, Claude Code, and Cursor.
+  The active UI driver writes a code-grounded anchor, excludes its own duplicate
+  CLI lane, verifies every reviewer claim against the real repo, and acts as sole
   judge. Use the default four-round arc for new campaigns or auditable
   continuation/scoped-tail receipts when explicitly requested. Includes
   optional ComfyUI and repo-local profiles. Use when the user says kibitz,
   /kibitz, second opinion, pressure-test, harden, round-robin, make bulletproof,
-  run the local panel, or asks to include local Codex, Antigravity, or Claude
-  reviewers.
+  run the local panel, or asks to include local Codex, Antigravity, Claude, or
+  Cursor reviewers.
 ---
 
 # Kibitz
@@ -22,23 +22,40 @@ real code and folding only what survives into an improved plan. A new campaign
 runs the full 4-round arc by default; explicit resumptions and user-scoped
 contiguous round ranges are supported with receipts.
 
-The default panel is **driver-aware**:
+There are **four lanes, one model family each** -- that split is the whole point,
+because four independent readings are worth more than four readings from the same
+family:
 
-- Claude driving -> Codex + Antigravity review.
-- Codex driving -> Antigravity + Claude Code review.
-- Antigravity driving -> Codex + Claude Code review.
-- No driver / standalone -> Codex + Antigravity + Claude Code review.
+| lane | CLI | family |
+|------|-----|--------|
+| `codex` | `codex exec` | GPT |
+| `antigravity` | `agy` | Gemini |
+| `claude` | `claude -p` | Claude |
+| `cursor` | `agent -p` | Grok |
 
-Use `--driver claude|codex|agy|none` when the host is not auto-detected. Use
-repeated `--only` flags for fallbacks, such as `--only codex --only claude` when
-Antigravity is out of quota.
+**A DRIVER NEVER REVIEWS ITSELF.** If Codex is driving, the `codex` CLI is not a
+second opinion -- it is the same system grading its own homework, and the same is
+true of agy driving agy, Claude driving Claude, and Cursor driving Cursor. So the
+default panel is **all four lanes MINUS the detected driver**:
+
+- Claude driving -> Codex + Antigravity + Cursor review.
+- Codex driving -> Antigravity + Claude Code + Cursor review.
+- Antigravity driving -> Codex + Claude Code + Cursor review.
+- Cursor driving -> Codex + Antigravity + Claude Code review.
+- No driver / standalone -> all four review.
+
+Use `--driver claude|codex|agy|cursor|none` when the host is not auto-detected.
+Use repeated `--only` flags for fallbacks, such as `--only codex --only cursor`
+when Antigravity is out of quota.
 
 **Host UI boundary:** when Kibitz is invoked from a product UI, that live UI is
 the driver/panelist for its model family. Do not launch the same system's CLI as
 a second reviewer from the base OS. In Antigravity UI, use `--driver agy` (or
 `--only codex --only claude`) so Antigravity participates through the UI anchor,
-not through an `agy` subprocess. Avoid `--all-agents` / `--only agy` in that
-context unless you are intentionally testing the CLI outside the UI.
+not through an `agy` subprocess. In Cursor, use `--driver cursor`. Avoid
+`--all-agents` in that context unless you are intentionally testing a CLI outside
+its own UI -- `--all-agents` deliberately ignores the boundary and CAN make a host
+review itself.
 
 > **Exact CLI flags, model-selection policy, and the versions this was proven
 > on live in [`COMPAT.md`](COMPAT.md).** They move fast; keep them out of your
@@ -53,8 +70,9 @@ context unless you are intentionally testing the CLI outside the UI.
   the driver is Claude; in Codex the driver is Codex. This *anchor review* is
   grounded from the start and stops the panel from hijacking synthesis with
   plausible-sounding hallucinations.
-- **The panel generates independent critiques.** By default it is the two local
-  agents that are not already the active driver; standalone runs use all three.
+- **The panel generates independent critiques.** By default it is the local
+  agents that are not already the active driver -- three of the four lanes;
+  standalone runs use all four.
   Each agent opens your repo in its own working directory and grounds its own
   review; neither sees the other's output. Different agent harnesses catch
   different things - that diversity is the value.
@@ -231,7 +249,8 @@ python scripts/kibitz.py \
 - `--driver {auto,none,codex,claude,antigravity,agy}` selects the active driver.
   `auto` honors `KIBITZ_DRIVER` and known host environment hints. `none` means
   standalone/full external panel.
-- `--all-agents` runs Codex + Antigravity + Claude Code regardless of driver.
+- `--all-agents` runs Codex + Antigravity + Claude Code + Cursor regardless of
+  driver. This ignores the host boundary and can make a driver review itself.
 - `--only codex`, `--only antigravity`/`--only agy`, or `--only claude` runs
   selected agents (repeatable) and overrides the driver-aware default.
 - `--dry-run` prints the detected/selected driver and reviewer agents without
