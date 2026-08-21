@@ -73,7 +73,11 @@ CURSOR_LAUNCHERS = ("cursor-agent.cmd", "agent.cmd", "cursor-agent.exe", "agent.
 
 def _cursor_present() -> bool:
     # Same order as kibitz.py's _which_cursor: KIBITZ_CURSOR_BIN, install dir, PATH.
-    for candidate_dir in (os.environ.get("KIBITZ_CURSOR_BIN", "").strip(), WIN_CURSOR_DIR):
+    configured = os.environ.get("KIBITZ_CURSOR_BIN", "").strip()
+    # Same contract as the runner: the override may point at the launcher itself.
+    if configured and Path(configured).is_file():
+        return True
+    for candidate_dir in (configured, WIN_CURSOR_DIR):
         if not candidate_dir:
             continue
         root = Path(candidate_dir)

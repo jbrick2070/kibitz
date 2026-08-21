@@ -72,7 +72,13 @@ def find_cursor(win_dir: str = WIN_CURSOR_DIR):
     KIBITZ_CURSOR_BIN, then the install dir, then PATH. A doctor that looks somewhere
     the runner does not will cheerfully report READY for a lane that cannot start.
     """
-    for candidate_dir in (os.environ.get("KIBITZ_CURSOR_BIN", "").strip(), win_dir):
+    configured = os.environ.get("KIBITZ_CURSOR_BIN", "").strip()
+    # The override may name the launcher itself, not its directory -- the runner
+    # accepts that, so the doctor must too or it reports NOT FOUND for a lane that
+    # runs fine, then falls through to a generic PATH `agent`.
+    if configured and Path(configured).is_file():
+        return configured
+    for candidate_dir in (configured, win_dir):
         if not candidate_dir:
             continue
         root = Path(candidate_dir)

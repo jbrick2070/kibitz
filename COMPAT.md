@@ -242,9 +242,13 @@ The command line is too long.
 ```
 
 rc=1, empty stdout. Every short smoke test still passes, so this breaks only in
-production. `run_cursor` therefore sends the prompt on stdin, and falls back to
-calling `versions\<newest>\node.exe index.js` directly (pure CreateProcess, 32767
-limit) if stdin ever stops working.
+production. `run_cursor` therefore sends the prompt on stdin.
+
+**There is deliberately NO automatic fallback transport.** An earlier draft retried via
+`node.exe index.js` + argv, and it was cut: a retry cannot tell a broken transport from
+a genuine `TOOL CHECK: FAIL` refusal or a bad review, so it deleted real answers and
+paid for the same question twice. If stdin ever stops working the leg must fail loudly
+and be fixed here - do not reintroduce a fallback.
 
 ### `--trust` is mandatory
 

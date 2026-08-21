@@ -125,6 +125,56 @@ if __name__ == "__main__":
 '''
 
 
+def check_review_acceptance() -> None:
+    """The refusal gate must reject refusals WITHOUT eating real reviews.
+
+    Both directions have drawn blood. A bare substring match discarded a grounded
+    10,110-byte review for quoting a refusal phrase; the fix then used a MULTILINE
+    sentinel regex, which discarded a review for quoting the output contract as an
+    indented block -- and both output directives contain that exact line. So the
+    quote-survives cases below are regressions, not hypotheticals.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("kibitz_under_test", KIBITZ)
+    kb = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(kb)
+
+    long_body = "Grounded finding citing scripts/kibitz.py:1141.\n" * 120
+    quotes_contract = (
+        "VERDICT: yes-with-fixes.\n\nMUST-FIX:\n"
+        "1. The directive tells a blocked agent to print:\n"
+        "  TOOL CHECK: FAIL\n  <the verbatim error>\n"
+        "  I cannot read the repository.\n"
+        "...which on a lane with no write tool is a false failure.\n" + long_body
+    )
+    quotes_phrase = (
+        "VERDICT: no.\nThe lane reports it is unable to access the file when blocked.\n"
+        + long_body
+    )
+    cases = [
+        ("real review quoting the output contract", quotes_contract, False),
+        ("real review quoting a refusal phrase", quotes_phrase, False),
+        ("anchored refusal", "TOOL CHECK: FAIL\nEPERM\nI cannot read the repository.\n", True),
+        ("anchored refusal with a large error dump",
+         "TOOL CHECK: FAIL\n" + ("stack frame\n" * 400) + "I cannot read the repository.\n", True),
+        ("unstructured refusal", ("noise\n" * 400) + "I cannot read the repository.\n", True),
+        ("placeholder filler", "| summary | summary |\nStandard processing applied\n", True),
+    ]
+    for label, text, should_fail in cases:
+        diagnostic = kb.unreadable_review_diagnostic(text)
+        if bool(diagnostic) != should_fail:
+            raise AssertionError(
+                f"review acceptance wrong for {label!r}: "
+                f"expected {'REJECT' if should_fail else 'ACCEPT'}, "
+                f"got {'REJECT' if diagnostic else 'ACCEPT'} ({diagnostic or 'clean'})"
+            )
+
+    # Read-only is a guarantee: an unknown mode must never reach --mode.
+    if kb.CURSOR_MODE not in kb.CURSOR_READ_ONLY_MODES:
+        raise AssertionError(f"cursor mode {kb.CURSOR_MODE!r} is not read-only")
+
+
 def write_stub_launchers(fake_bin: Path) -> None:
     stub_py = fake_bin / "stub_agent.py"
     stub_py.write_text(STUB_AGENT, encoding="utf-8")
@@ -266,6 +316,8 @@ def main() -> int:
             "KIBITZ_AGY_QUOTA_PERCENT",
             "KIBITZ_CLAUDE_USAGE_PERCENT",
             "KIBITZ_CLAUDE_QUOTA_PERCENT",
+            "KIBITZ_CURSOR_USAGE_PERCENT",
+            "KIBITZ_CURSOR_QUOTA_PERCENT",
         ):
             env.pop(key, None)
         env["KIBITZ_CODEX_USAGE_PERCENT"] = "72"
@@ -428,6 +480,7 @@ def main() -> int:
         if "AGY FILE REVIEW" in empty_review.read_text(encoding="utf-8"):
             raise AssertionError("empty agy leg produced a fake review")
 
+    check_review_acceptance()
     print("agent file-handoff regression: PASS")
     return 0
 

@@ -292,7 +292,21 @@ CURSOR_MODEL = os.environ.get("KIBITZ_CURSOR_MODEL", "cursor-grok-4.6-high").str
 #: Read-only review posture. `ask` is Q&A-style and read-only, and is the mode actually
 #: proven on this platform; `plan` is also read-only but untested here. Neither can edit,
 #: so the lane never needs --force / --yolo and never gets write access at all.
-CURSOR_MODE = os.environ.get("KIBITZ_CURSOR_MODE", "ask").strip()
+#:
+#: ALLOWLISTED, not passed through. Cursor's default agent mode HAS a write tool, so an
+#: unrecognised KIBITZ_CURSOR_MODE reaching --mode would silently hand a reviewer the
+#: ability to edit the repo it is reviewing. Read-only here is a guarantee, not a hope.
+CURSOR_READ_ONLY_MODES = ("ask", "plan")
+_requested_cursor_mode = os.environ.get("KIBITZ_CURSOR_MODE", "ask").strip().lower()
+CURSOR_MODE = _requested_cursor_mode if _requested_cursor_mode in CURSOR_READ_ONLY_MODES else "ask"
+#: Set when the requested mode was rejected, so run_cursor can say so out loud.
+CURSOR_MODE_OVERRIDDEN = (
+    f"KIBITZ_CURSOR_MODE={_requested_cursor_mode!r} is not a known READ-ONLY mode "
+    f"({', '.join(CURSOR_READ_ONLY_MODES)}); forcing 'ask'. A reviewer must not be "
+    f"able to write to the repo it is reviewing."
+    if _requested_cursor_mode and _requested_cursor_mode not in CURSOR_READ_ONLY_MODES
+    else ""
+)
 CLAUDE_BUDGET = os.environ.get("KIBITZ_CLAUDE_BUDGET", "medium").strip().lower()
 CLAUDE_MODEL_ENV = os.environ.get("KIBITZ_CLAUDE_MODEL")
 CLAUDE_EFFORT_ENV = os.environ.get("KIBITZ_CLAUDE_EFFORT")
@@ -500,6 +514,11 @@ def cursor_model_family(model: str) -> str:
     for prefix, family in _CURSOR_FAMILY_PREFIXES:
         if low.startswith(prefix):
             return family
+    # Cursor vendors some ids behind its own name ("cursor-grok-..."). Strip that and
+    # retry, so a hypothetical "cursor-claude-..." is still recognised as claude-family
+    # rather than falling through as unknown and skipping the duplication check.
+    if low.startswith("cursor-"):
+        return cursor_model_family(low[len("cursor-"):])
     return ""
 
 
@@ -537,9 +556,15 @@ def cursor_pin_warnings(exe: str) -> list[str]:
     a stale pin still returns a real review, and killing the run would cost the seat.
     An INVALID pin is the one that actually breaks a leg, so it is reported first.
     """
-    catalog = _cursor_catalog(exe)
-    if not catalog or not CURSOR_MODEL:
+    if not CURSOR_MODEL:
         return []
+    catalog = _cursor_catalog(exe)
+    if not catalog:
+        # An unreadable catalog is NOT a clean bill of health. Returning [] here made
+        # --check-pins print "cursor pin is current" after a CLI error or a parse miss,
+        # which is worse than saying nothing -- it is a stale pin wearing a green light.
+        return ["cursor catalog unreadable (`agent --list-models` returned nothing "
+                "parseable); the pin was NOT verified."]
     slugs = [slug for slug, _display in catalog]
     if CURSOR_MODEL not in slugs:
         sample = ", ".join(s for s in slugs if s.startswith("cursor-grok"))[:160]
@@ -1167,14 +1192,19 @@ UNREADABLE_REVIEW_REFUSAL_MARKERS = (
     "unable to access the file",
 )
 
-#: The explicit sentinel the output directives mandate, anchored to a line start so a
-#: mid-sentence mention cannot trip it. This one is decisive regardless of length.
-_TOOL_CHECK_FAIL = re.compile(r"^\s*tool check:\s*fail", re.IGNORECASE | re.MULTILINE)
+#: The explicit sentinel the output directives mandate. Anchored to the START OF THE
+#: DOCUMENT (\A, no MULTILINE) because the directive says to LEAD with it.
+#:
+#: This was briefly written as `^...` + MULTILINE, which matches the sentinel on ANY
+#: line -- and both output directives quote that line themselves, indented. So any
+#: grounded review that quoted the output contract while reasoning about the refusal
+#: path was discarded, with a VERDICT and 7,600 characters of findings, which is the
+#: very false-positive class this whole function exists to prevent. Caught by the
+#: Cursor lane reviewing its own implementation, 2026-08-21. Do not re-add MULTILINE.
+_TOOL_CHECK_FAIL = re.compile(r"\A\s*tool check:\s*fail", re.IGNORECASE)
 
 #: A refusal written per the directive is far shorter than any real review.
 REFUSAL_MAX_CHARS = 2000
-#: ...and the marker lands in its opening lines, not buried in an argument.
-REFUSAL_HEAD_CHARS = 400
 #: Every round prompt demands a VERDICT line, so a document carrying a refusal marker
 #: but NO verdict is a refusal however long it grew. This closes the gap a pure length
 #: test leaves: a blocked agent that dumps a large verbatim error before its refusal
@@ -1520,6 +1550,9 @@ def run_cursor(prompt: str, repo: Path, out_file: Path, log_file: Path) -> bool:
             encoding="utf-8")
         print("  x cursor: command not found")
         return False
+    if CURSOR_MODE_OVERRIDDEN:
+        print(f"  [MODE] {CURSOR_MODE_OVERRIDDEN}")
+        append_quota_warning(run_dir, CURSOR_MODE_OVERRIDDEN)
     family_warning = cursor_family_warning()
     if family_warning:
         print(f"  [FAMILY] {family_warning}")
