@@ -649,16 +649,25 @@ def pick_codex_model(exe: str, repo: Path, run_dir: Path):
         )
         return None
     (run_dir / "codex_models.json").write_text(raw, encoding="utf-8")
-    slugs = []
+    slugs, all_slugs = [], []
     try:
         for m in _json.loads(raw).get("models", []):
             s = str(m.get("slug", ""))
-            if s and not any(b in s for b in ("mini", "fast", "spark", "nano")):
+            if not s:
+                continue
+            all_slugs.append(s)
+            if not any(b in s for b in ("mini", "fast", "spark", "nano")):
                 slugs.append(s)
     except Exception:  # noqa: BLE001
-        slugs = []
+        slugs, all_slugs = [], []
     if CODEX_MODEL_REQUEST:
-        if CODEX_MODEL_REQUEST in slugs:
+        # An EXPLICIT request is honored against the whole live catalog, small
+        # models included: an operator asking for Spark while the strong tier
+        # is quota-held has made a decision, and the small-model filter above
+        # guards only the AUTOMATIC pick below. (2026-09-04: the request for
+        # gpt-5.3-codex-spark was silently replaced by gpt-5.6-sol, which had
+        # no quota, and the lane failed.)
+        if CODEX_MODEL_REQUEST in all_slugs:
             resolution_file.write_text(
                 "catalog=available\n"
                 f"requested={CODEX_MODEL_REQUEST}\n"
