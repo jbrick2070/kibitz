@@ -82,7 +82,7 @@ codex exec -C <repo> --sandbox read-only --json --color never \
 - **Reasoning:** default `model_reasoning_effort="high"`. `xhigh` is reserved
   for deep review and is model-dependent; if an `xhigh` run fails, the script
   retries once with `high`. Override via `KIBITZ_CODEX_REASONING`.
-- **Model pin:** set `KIBITZ_CODEX_MODEL` (e.g. `gpt-5.6-sol`) to bypass auto-pick
+- **Model pin:** set `KIBITZ_CODEX_MODEL` (e.g. `gpt-6-astra`) to bypass auto-pick
   entirely; empty/unset = auto-pick below.
 - **Model:** poll the live catalog with `codex debug models` (JSON), then pick
   the strongest non-mini model, preferring in order: `gpt-5.5`, then
@@ -131,7 +131,7 @@ agy --model <model> --dangerously-skip-permissions --print-timeout 5m \
 
 ### Antigravity model policy
 
-- Default model: **`Gemini 3.7 Flash (High)`** (override via `KIBITZ_AGY_MODEL`; set to
+- Default model: **`Gemini 3.8 Flash (High)`** (override via `KIBITZ_AGY_MODEL`; set to
   `""` to use agy's own default).
 - `agy` has no separate reasoning flag - reasoning rides the picker display
   name's parenthesized level. The override must be the exact display name;

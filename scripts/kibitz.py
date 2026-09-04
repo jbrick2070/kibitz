@@ -60,11 +60,11 @@ Usage:
   python kibitz.py --doc plan.md --round r1 --timeout 600
 
 Configuration is via CLI args and environment variables only -- no hardcoded paths.
-  KIBITZ_CODEX_REASONING  Codex reasoning effort (default "high"; "xhigh" retries to "high").
+  KIBITZ_CODEX_REASONING  Codex reasoning effort (default "high"; ultra/max/xhigh step down on failure).
   KIBITZ_CODEX_MODEL      Codex model slug pin, validated against the live catalog
-                          (e.g. "gpt-5.6-sol"; "" = auto-pick strongest). A slug the
+                          (e.g. "gpt-6-astra"; "" = auto-pick strongest). A slug the
                           catalog does not list warns and falls back rather than failing.
-  KIBITZ_AGY_MODEL        Antigravity picker display name (default "Gemini 3.7 Flash (High)"; "" = agy default).
+  KIBITZ_AGY_MODEL        Antigravity picker display name (default "Gemini 3.8 Flash (High)"; "" = agy default).
   KIBITZ_CURSOR_MODEL     Cursor model id (default "cursor-grok-4.6-high"; "" = cursor default).
                           Keep this on GROK -- see the DIVERSITY RULE.
   KIBITZ_CURSOR_MODE      Cursor execution mode, ask or plan (default "ask"). Both are
@@ -237,7 +237,33 @@ CODEX_MODEL_REQUEST = os.environ.get("KIBITZ_CODEX_MODEL", "").strip() or None
 #: (highest "gpt-5*" slug by reverse sort) would have chosen gpt-5.6-terra --
 #: alphabetically last, not strongest -- so the fallback cannot be trusted to
 #: age gracefully either. Keep the operator's model of record FIRST.
-CODEX_MODEL_PREFERENCE = ("gpt-5.6-sol", "gpt-5.5", "gpt-5-codex", "gpt-5")
+CODEX_MODEL_PREFERENCE = ("gpt-6-astra", "gpt-5.6-sol", "gpt-5.5",
+                          "gpt-5-codex", "gpt-5")
+
+
+#: Any GPT generation, so a NEW one is visible to the auto-pick fallback. The
+#: old rule was `startswith("gpt-5")`, which could not match gpt-6-astra -- when
+#: the pin above went stale the safety net was blind in the same direction, and
+#: only the receipt file said which model actually answered.
+_GPT_SLUG = re.compile(r"^gpt-(\d+)(?:\.(\d+))?")
+
+
+def _gpt_sort_key(slug):
+    """Sort by NUMERIC generation, then minor, then the slug.
+
+    A plain reverse string sort puts "gpt-5.6-terra" above "gpt-6-astra" and
+    would have picked the older generation forever.
+    """
+    m = _GPT_SLUG.match(slug)
+    major = int(m.group(1)) if m else -1
+    minor = int(m.group(2)) if (m and m.group(2)) else 0
+    return (major, minor, slug)
+
+
+#: One step down per tier, so an effort the model does not support degrades
+#: instead of failing the leg. gpt-6-astra advertises low/medium/high/xhigh/
+#: max/ultra; older models stop at high.
+_REASONING_FALLBACK = {"ultra": "max", "max": "xhigh", "xhigh": "high"}
 # Antigravity has NO reasoning flag -- reasoning rides the picker display name's
 # parenthesized level. `agy models` exposes discovery slugs, but --model requires
 # the exact PICKER DISPLAY NAME, parentheses and all.
@@ -267,7 +293,7 @@ CODEX_MODEL_PREFERENCE = ("gpt-5.6-sol", "gpt-5.5", "gpt-5-codex", "gpt-5")
 # agy=Opus duplicates Claude, agy=gpt-oss duplicates Codex, and a cursor lane pointed
 # at Codex 5.3 or Claude Opus 5 duplicates two seats at once -- each collapses the
 # panel's whole value, which is FOUR independent readings of the same code.
-AGY_MODEL = os.environ.get("KIBITZ_AGY_MODEL", "Gemini 3.7 Flash (High)")
+AGY_MODEL = os.environ.get("KIBITZ_AGY_MODEL", "Gemini 3.8 Flash (High)")
 # A PRINT TIMEOUT IS NOT A QUOTA BLOCK (2026-08-17). `--timeout` on this script
 # does NOT reach agy; this env var builds agy's own --print-timeout. The Pro lane
 # died twice on "Error: timeout waiting for response" at the old 5m default and
@@ -696,8 +722,9 @@ def pick_codex_model(exe: str, repo: Path, run_dir: Path):
                 encoding="utf-8",
             )
             return pref
-    g5 = sorted((s for s in slugs if s.startswith("gpt-5")), reverse=True)
-    selected = g5[0] if g5 else None
+    candidates = sorted((s for s in slugs if _GPT_SLUG.match(s)),
+                        key=_gpt_sort_key, reverse=True)
+    selected = candidates[0] if candidates else None
     resolution_file.write_text(
         "catalog=available\n"
         f"requested={CODEX_MODEL_REQUEST or '(none)'}\n"
@@ -1404,12 +1431,13 @@ def run_codex(prompt: str, repo: Path, out_file: Path, log_file: Path) -> bool:
     diagnostic = "" if ok else quota_diagnostic("codex", started_at, proc.stdout or "", proc.stderr or "")
     if not ok and diagnostic:
         record_failure_diagnostic("codex", out_file, log_file, diagnostic)
-    if not ok and not diagnostic and CODEX_REASONING == "xhigh":
-        print("  .. xhigh failed -> retry once with high")
-        (run_dir / "codex_reasoning_selected.txt").write_text("high (xhigh failed)",
-                                                              encoding="utf-8")
+    fallback = _REASONING_FALLBACK.get(CODEX_REASONING)
+    if not ok and not diagnostic and fallback:
+        print(f"  .. {CODEX_REASONING} failed -> retry once with {fallback}")
+        (run_dir / "codex_reasoning_selected.txt").write_text(
+            f"{fallback} ({CODEX_REASONING} failed)", encoding="utf-8")
         started_at = time.time()
-        proc = _run("high")
+        proc = _run(fallback)
         ok = collect_review("codex", out_file, log_file, proc.returncode, proc.stdout or "")
         if not ok:
             diagnostic = quota_diagnostic("codex", started_at, proc.stdout or "", proc.stderr or "")
