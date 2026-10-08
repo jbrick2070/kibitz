@@ -74,10 +74,14 @@ class CodexSelectionTests(unittest.TestCase):
     def test_prerelease_numbers_are_compared_numerically(self):
         self.check_versions("0.162.0-alpha.2", "0.162.0-alpha.10", expected="desktop")
 
-    def check_versions(self, path_version, desktop_version, expected):
+    def test_native_binary_beats_equal_version_cmd_shim(self):
+        self.check_versions("0.162.0-alpha.2", "0.162.0-alpha.2",
+                            expected="desktop", path_name="codex.cmd")
+
+    def check_versions(self, path_version, desktop_version, expected, path_name="codex.exe"):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            path_exe = root / "old" / "codex.exe"
+            path_exe = root / "old" / path_name
             desktop_exe = root / "desktop" / "hash" / "codex.exe"
             for file in (path_exe, desktop_exe):
                 file.parent.mkdir(parents=True)

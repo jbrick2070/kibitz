@@ -101,7 +101,9 @@ codex exec -C <repo> --sandbox read-only --json --color never \
 - **Executable:** the runner and doctor compare local `codex --version` results
   from PATH and standard Windows install directories, including Desktop's
   hashed bin directory, and use the newest CLI. Stable beats prerelease at
-  the same numeric version; ties retain discovery order. Set
+  the same numeric version; ties prefer a native `.exe` over a forwarding
+  shim, then retain discovery order. This avoids Windows command-line length
+  limits for long reviewer prompts. Set
   `KIBITZ_CODEX_BIN` to an exact launcher file to override this choice.
   This does not change global PATH, login credentials, or Codex config.
 - `--check-pins` prints the selected executable and queries its live Codex

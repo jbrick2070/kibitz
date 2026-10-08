@@ -57,7 +57,10 @@ def find_codex(*extra_dirs: str) -> str | None:
         prerelease = match.group(4) or ""
         suffix = tuple((0, int(part)) if part.isdecimal() else (1, part)
                        for part in prerelease.split("."))
-        version = (*map(int, match.group(1, 2, 3)), not bool(prerelease), suffix)
+        # Prefer the native executable over an equal-version .cmd forwarding
+        # shim: long reviewer prompts must not hit cmd.exe's argument limit.
+        version = (*map(int, match.group(1, 2, 3)), not bool(prerelease), suffix,
+                   Path(candidate).suffix.lower() == ".exe")
         if best_version is None or version > best_version:
             best, best_version = candidate, version
     return best or (unique[0] if unique else None)
