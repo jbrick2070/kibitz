@@ -18,6 +18,7 @@ BUNDLE_FILES = (
     "agents/openai.yaml",
     "scripts/doctor.py",
     "scripts/kibitz.py",
+    "scripts/codex_cli.py",
     "scripts/comfyui_profile.py",
     "references/review-prompt-r1.md",
     "references/review-prompt-r2.md",

@@ -62,8 +62,9 @@ Usage:
 Configuration is via CLI args and environment variables only -- no hardcoded paths.
   KIBITZ_CODEX_REASONING  Codex reasoning effort (default "high"; ultra/max/xhigh step down on failure).
   KIBITZ_CODEX_MODEL      Codex model slug pin, validated against the live catalog
-                          (e.g. "gpt-6-astra"; "" = auto-pick strongest). A slug the
+                          (e.g. "gpt-6.1-sol"; "" = auto-pick). A slug the
                           catalog does not list warns and falls back rather than failing.
+  KIBITZ_CODEX_BIN        Explicit Codex launcher file; otherwise use the newest installed CLI.
   KIBITZ_AGY_MODEL        Antigravity picker display name (default "Gemini 3.8 Flash (High)"; "" = agy default).
   KIBITZ_CURSOR_MODEL     Cursor model id (default "cursor-grok-4.6-high"; "" = cursor default).
                           Keep this on GROK -- see the DIVERSITY RULE.
@@ -109,6 +110,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from codex_cli import find_codex
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
 PROMPTS_DIR = SKILL_DIR / "references"
@@ -147,6 +149,8 @@ def _extra_candidates(name: str, extra_dirs: tuple[str, ...]) -> list[str]:
 
 
 def _which(name: str, *extra_dirs: str):
+    if name == "codex":
+        return find_codex(*extra_dirs)
     exe = shutil.which(name)
     extras = _extra_candidates(name, extra_dirs)
     if exe and not _is_windowsapps_alias(exe):
@@ -196,9 +200,8 @@ def _which_cursor(extra_dir: str = ""):
 _CURSOR_MODEL_LINE = re.compile(r"^\s*(?P<slug>[a-z0-9][a-z0-9.\-]*)\s+-\s+(?P<name>.+?)\s*$")
 
 
-# Codex model + reasoning policy: poll the LIVE catalog via `codex debug models`, prefer the
-# strongest non-mini model, default reasoning_effort="high". xhigh is model-dependent -> try
-# only if asked, retry once with high on failure. See COMPAT.md.
+# Codex model policy uses the selected CLI's live catalog. Reasoning defaults to
+# high; an explicitly higher tier retries once at the next tier. See COMPAT.md.
 CODEX_REASONING = os.environ.get("KIBITZ_CODEX_REASONING", "high")
 
 # ---------------------------------------------------------------------------
@@ -230,15 +233,12 @@ CODEX_REASONING = os.environ.get("KIBITZ_CODEX_REASONING", "high")
 # degrades to the catalog preference with a warning instead of failing the whole leg on
 # an invalid-model error. Same reasoning as the pin-rot block below.
 CODEX_MODEL_REQUEST = os.environ.get("KIBITZ_CODEX_MODEL", "").strip() or None
-#: STALE PREFERENCE IS A SILENT DOWNGRADE (2026-07-27). This tuple read
-#: ("gpt-5.5", "gpt-5-codex", "gpt-5") while the live catalog already carried
-#: gpt-5.6-sol / -luna / -terra, so every arc quietly ran the older model and
-#: only ``codex_model_selected.txt`` said so. The auto-pick FALLBACK below
-#: (highest "gpt-5*" slug by reverse sort) would have chosen gpt-5.6-terra --
-#: alphabetically last, not strongest -- so the fallback cannot be trusted to
-#: age gracefully either. Keep the operator's model of record FIRST.
-CODEX_MODEL_PREFERENCE = ("gpt-6-astra", "gpt-5.6-sol", "gpt-5.5",
-                          "gpt-5-codex", "gpt-5")
+# Prefer the current workhorse for routine reviews, with catalog-backed fallbacks.
+# Use KIBITZ_CODEX_MODEL=gpt-6-astra for an explicit frontier-model review.
+CODEX_MODEL_PREFERENCE = (
+    "gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-5.6-sol",
+    "gpt-5.6-terra", "gpt-5.5", "gpt-5-codex", "gpt-5",
+)
 
 
 #: Any GPT generation, so a NEW one is visible to the auto-pick fallback. The
@@ -649,8 +649,9 @@ def resolve_claude_budget():
 
 
 def pick_codex_model(exe: str, repo: Path, run_dir: Path):
-    """Poll `codex debug models`, log it, pick the strongest non-mini model. Returns a slug or
-    None (let Codex use its default). Never picks mini/fast/spark unless nothing else exists.
+    """Poll the live catalog and prefer a visible full-size review model.
+
+    Returns a slug or None (let Codex use its default when discovery fails).
 
     An explicit KIBITZ_CODEX_MODEL is accepted only when the live catalog lists
     that exact slug. This prevents stale/private model names in config or the
@@ -682,7 +683,8 @@ def pick_codex_model(exe: str, repo: Path, run_dir: Path):
             if not s:
                 continue
             all_slugs.append(s)
-            if not any(b in s for b in ("mini", "fast", "spark", "nano")):
+            if (m.get("visibility", "list") != "hide"
+                    and not any(b in s for b in ("mini", "fast", "spark", "nano", "luna"))):
                 slugs.append(s)
     except Exception:  # noqa: BLE001
         slugs, all_slugs = [], []
@@ -1391,8 +1393,7 @@ def load_profiles(repo: Path, requested: list[str], no_profiles: bool):
 
 
 def run_codex(prompt: str, repo: Path, out_file: Path, log_file: Path) -> bool:
-    """Codex: read-only sandbox; -o writes the final answer to out_file; model auto-picked
-    from the live catalog; reasoning_effort=high (xhigh retries to high)."""
+    """Run a read-only review with a catalog-selected model and file handoff."""
     exe = _which("codex", _WIN_CODEX_BIN)
     if exe is None:
         log_file.write_text(r"codex not found on PATH or in %LOCALAPPDATA%\OpenAI\Codex\bin",
@@ -1400,6 +1401,7 @@ def run_codex(prompt: str, repo: Path, out_file: Path, log_file: Path) -> bool:
         print("  x codex: command not found")
         return False
     run_dir = out_file.parent
+    (run_dir / "codex_executable.txt").write_text(exe, encoding="utf-8")
     preflight_blocker = quota_preflight("codex", exe, repo, run_dir)
     if preflight_blocker:
         record_failure_diagnostic("codex", out_file, log_file, preflight_blocker)
@@ -1798,6 +1800,15 @@ def main() -> None:
             if not cursor_warnings:
                 print("  [PIN] cursor pin is current.")
         print(f"  [PIN] codex preference order: {', '.join(CODEX_MODEL_PREFERENCE)}")
+        codex_exe = _which("codex", _WIN_CODEX_BIN)
+        if codex_exe:
+            import tempfile
+            with tempfile.TemporaryDirectory(prefix="kibitz-codex-pin-") as temporary:
+                selected = pick_codex_model(codex_exe, Path.cwd(), Path(temporary))
+            print(f"  [PIN] codex executable: {codex_exe}")
+            print(f"  [PIN] codex selected: {selected or '(CLI default; no eligible model resolved)'}")
+        else:
+            print("  [PIN] codex CLI not found; skipping model discovery.")
         print("  [PIN] claude lane uses ALIASES (haiku/sonnet/opus), which do "
               "not rot -- nothing to refresh.")
         return 0
