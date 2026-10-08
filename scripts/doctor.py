@@ -26,6 +26,7 @@ import os
 import shutil
 import sys
 from pathlib import Path
+from codex_cli import find_codex
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -98,6 +99,7 @@ def find_cursor(win_dir: str = WIN_CURSOR_DIR):
 REQUIRED_FILES = [
     "SKILL.md",
     "scripts/kibitz.py",
+    "scripts/codex_cli.py",
     "scripts/comfyui_profile.py",
     "COMPAT.md",
     "references/review-prompt-r1.md",
@@ -122,8 +124,10 @@ def extra_candidates(name: str, win_dir: str) -> list[str]:
 
 
 def find_agent(name: str, win_dir: str):
-    """Find an agent CLI: PATH first, then the Windows per-user install dir.
+    """Find an agent CLI: newest Codex, otherwise PATH then the install dir.
     Returns the full path string, or None if not found."""
+    if name == "codex":
+        return find_codex(win_dir)
     exe = shutil.which(name)
     extras = extra_candidates(name, win_dir)
     if exe and not is_windowsapps_alias(exe):

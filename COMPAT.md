@@ -13,7 +13,7 @@ CLI flags, the model-selection policy, and the tool versions this was proven on.
 
 | Tool | Version proven | Notes |
 |------|----------------|-------|
-| Codex CLI (`codex`) | `0.142.5`, running model `gpt-5.5` | `codex exec` non-interactive mode |
+| Codex CLI (`codex`) | `0.162.0-alpha.2`, running model `gpt-6.1-sol` (2026-10-08) | `codex exec` non-interactive mode, ChatGPT sign-in |
 | Antigravity (`agy`) | `1.0.16`, `1.1.5` | no `--headless`, no `--approve`; `agy models` is available for preflight |
 | Claude Code (`claude`) | `2.1.72` | `claude -p` non-interactive mode |
 | Cursor CLI (`agent`) | `2026.08.11-e8db854` | `agent -p` non-interactive; **prompt on STDIN**, review from STDOUT; standalone - the Cursor editor is NOT required |
@@ -79,18 +79,36 @@ codex exec -C <repo> --sandbox read-only --json --color never \
 
 ### Codex model + reasoning policy
 
-- **Reasoning:** default `model_reasoning_effort="high"`. `xhigh` is reserved
-  for deep review and is model-dependent; if an `xhigh` run fails, the script
-  retries once with `high`. Override via `KIBITZ_CODEX_REASONING`.
-- **Model pin:** set `KIBITZ_CODEX_MODEL` (e.g. `gpt-6-astra`) to bypass auto-pick
-  entirely; empty/unset = auto-pick below.
+- **Reasoning:** default `model_reasoning_effort="high"`. Override via
+  `KIBITZ_CODEX_REASONING`. Failed non-quota runs at `ultra`, `max`, or `xhigh`
+  retry once at the next tier (`max`, `xhigh`, or `high`, respectively).
+- **Model pin:** set `KIBITZ_CODEX_MODEL` (e.g. `gpt-6.1-sol` or `gpt-6-astra`).
+  The exact slug must appear in the live catalog; an absent pin warns and falls
+  back to automatic selection. An explicit pin may select a smaller or hidden
+  catalog model. Empty/unset uses the preference below.
 - **Model:** poll the live catalog with `codex debug models` (JSON), then pick
-  the strongest non-mini model, preferring in order: `gpt-5.5`, then
-  `gpt-5-codex`, then `gpt-5`; otherwise the highest `gpt-5*` slug. Models tagged
-  `mini` / `fast` / `spark` / `nano` are never auto-selected. If polling fails,
-  Codex falls back to its own default model.
-- The default coding/review pick is **`gpt-5.5` at `high`** for family diversity
-  against the Gemini lane.
+  the first available visible model in this order: `gpt-6.1-sol`,
+  `gpt-6-astra`, `gpt-6-sol`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.5`,
+  `gpt-5-codex`, `gpt-5`. Otherwise rank GPT slugs by numeric generation and
+  minor version, then slug. Automatic selection excludes hidden models and
+  slugs containing `mini`, `fast`, `spark`, `nano`, or `luna`. If discovery
+  fails or no eligible model exists, the runner leaves selection to Codex's
+  own default. Catalog membership is discovery evidence, not a guarantee that
+  a model request will succeed.
+- The default review preference is **`gpt-6.1-sol` at `high`**. Set
+  `KIBITZ_CODEX_MODEL=gpt-6-astra` when a frontier-model review is desired.
+  Current model reference: https://developers.openai.com/api/docs/models/gpt-6.1-sol
+- **Executable:** the runner and doctor compare local `codex --version` results
+  from PATH and standard Windows install directories, including Desktop's
+  hashed bin directory, and use the newest CLI. Stable beats prerelease at
+  the same numeric version; ties retain discovery order. Set
+  `KIBITZ_CODEX_BIN` to an exact launcher file to override this choice.
+  This does not change global PATH, login credentials, or Codex config.
+- `--check-pins` prints the selected executable and queries its live Codex
+  catalog. Each review records `codex_executable.txt`, `codex_models.json`,
+  `codex_model_resolution.txt`, and `codex_model_selected.txt` for diagnosis.
+  If Desktop works but a reviewer reports an unsupported model, check these
+  receipts for an older CLI before changing the model slug or signing in again.
 
 ## Antigravity (`agy`)
 

@@ -303,6 +303,7 @@ def main() -> int:
         # kibitz resolves the Cursor launcher from its install directory before PATH,
         # so shadowing PATH alone would still reach a REAL Cursor install on a dev box.
         env["KIBITZ_CURSOR_BIN"] = str(fake_bin)
+        env["KIBITZ_CODEX_BIN"] = str(fake_bin / ("codex.cmd" if os.name == "nt" else "codex"))
         env.pop("KIBITZ_AGY_MODEL", None)
         env["KIBITZ_CLAUDE_MODEL"] = ""
         env["KIBITZ_CLAUDE_EFFORT"] = ""
@@ -365,16 +366,16 @@ def main() -> int:
         selected_model = (
             first / "agy_model_selected.txt"
         ).read_text(encoding="utf-8").strip()
-        if selected_model != "Gemini 3.7 Flash (High)":
+        if selected_model != "Gemini 3.8 Flash (High)":
             raise AssertionError(
                 f"wrong default Antigravity picker name: {selected_model!r}"
             )
         assert_contains(
-            first / "antigravity.log", "MODEL: Gemini 3.7 Flash (High)", ok
+            first / "antigravity.log", "MODEL: Gemini 3.8 Flash (High)", ok
         )
         assert_contains(
             first / "antigravity.log",
-            "'--model', 'Gemini 3.7 Flash (High)'",
+            "'--model', 'Gemini 3.8 Flash (High)'",
             ok,
         )
         assert_contains(first / "codex_quota_status.txt", "usage_percent=72", ok)

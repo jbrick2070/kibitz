@@ -214,11 +214,14 @@ git clone https://github.com/jbrick2070/kibitz
 python kibitz/scripts/kibitz.py --doc path/to/plan.md --round r1 --topic mytopic --repo /path/to/your/repo
 ```
 
-The script resolves the CLIs itself with **no PATH required**: it checks `PATH`,
-then falls back to the standard install dirs and `rglob`s them -- so it finds
-`codex` even when it lives in a hashed bin dir (e.g.
-`%LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe`), `agy` in
-`%LOCALAPPDATA%\agy\bin`, and `claude` in `%USERPROFILE%\.local\bin`.
+The script resolves the CLIs itself with **no PATH required**. For Codex, it
+compares versions on PATH and in standard Windows install directories,
+including `%LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe`, and selects the
+newest installed CLI. Set `KIBITZ_CODEX_BIN` to an exact launcher file to override
+that choice. This prevents an older standalone CLI from hiding models offered
+by an updated Desktop installation. Other lanes check PATH and their standard
+install directories, including `%LOCALAPPDATA%\agy\bin` and
+`%USERPROFILE%\.local\bin` for Claude.
 Hand-rolling the resolution is exactly how a host misses a local agent and
 drops to a smaller panel for no reason -- so don't. (Run
 `python scripts/doctor.py` first if you want to confirm the agents resolve.)
@@ -258,6 +261,9 @@ python scripts/kibitz.py \
   (repeatable) and overrides the driver-aware default.
 - `--dry-run` prints the detected/selected driver and reviewer agents without
   calling any agents; use it to confirm host detection without spending prompts.
+- Codex prefers `gpt-6.1-sol` at `high` when its live catalog offers it.
+  `KIBITZ_CODEX_MODEL` requests another exact catalog slug; use `--check-pins`
+  to inspect the resolved CLI and model. See `COMPAT.md` for fallback policy.
 - If `agy` is out of quota, use `--only claude` or repeat
   `--only codex --only claude`.
 - For the Claude Code reviewer lane, control spend with

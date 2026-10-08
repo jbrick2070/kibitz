@@ -26,6 +26,7 @@ REQUIRED_FILES = [
     "agents/openai.yaml",
     "scripts/build_skill_bundle.py",
     "scripts/kibitz.py",
+    "scripts/codex_cli.py",
     "scripts/comfyui_profile.py",
     "COMPAT.md",
     "references/review-prompt-r1.md",
@@ -52,6 +53,7 @@ def check_parse() -> Optional[str]:
     for rel in (
         "scripts/build_skill_bundle.py",
         "scripts/kibitz.py",
+        "scripts/codex_cli.py",
         "scripts/comfyui_profile.py",
     ):
         target = ROOT / rel
